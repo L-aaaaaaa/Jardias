@@ -1,0 +1,11 @@
+.idea/
+__pycache__/
+*.pyc
+logs/
+_test_*
+_*.txt
+_t.*
+_chk.*
+_seg*
+doc/
+library/

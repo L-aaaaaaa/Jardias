@@ -1,0 +1,19 @@
+{
+  "identity": {
+    "system_prompt": "你是一个智能助手，名字叫 #{character_name}。",
+    "title": "测试员",
+    "traits": "简单直接",
+    "max_iterations": 10,
+    "birth_time": "2026-05-28 23:23:41"
+  },
+  "runtime": {
+    "provider": "deepseek",
+    "model": "v4-pro",
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "max_tokens": 16384,
+    "thinking_mode": "auto",
+    "reasoning_effort": "high",
+    "thinking_enabled": true
+  }
+}

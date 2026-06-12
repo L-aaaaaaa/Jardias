@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "providers": [
+    {
+      "name": "minimax",
+      "api_key_env": "MINIMAX_API_KEY",
+      "base_url": "https://api.minimax.chat/v1",
+      "models": {
+        "2.7快": { "id": "MiniMax-M2.7-highspeed", "caps": ["text", "tool_call", "thinking", "fast"] },
+        "2.7":   { "id": "MiniMax-M2.7",           "caps": ["text", "tool_call", "thinking"] }
+      }
+    },
+    {
+      "name": "dashscope",
+      "api_key_env": "DASHSCOPE_PLAN_API_KEY",
+      "base_url": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      "models": {
+        "千问3.6+": { "id": "qwen3.6-plus",    "caps": ["text", "tool_call", "vision", "thinking"] },
+        "kimi 2.5": { "id": "kimi-k2.5",       "caps": ["text", "tool_call", "vision", "long_context"] },
+        "glm-5":    { "id": "glm-5",            "caps": ["text", "tool_call", "thinking"] },
+        "M2.5":     { "id": "MiniMax-M2.5",     "caps": ["text", "tool_call"] }
+      }
+    },
+    {
+      "name": "deepseek",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "base_url": "https://api.deepseek.com",
+      "models": {
+        "v4-flash": { "id": "deepseek-v4-flash", "caps": ["text", "tool_call", "thinking", "reasoning_stream", "fast"] },
+        "v4-pro":   { "id": "deepseek-v4-pro",   "caps": ["text", "tool_call", "thinking", "reasoning_stream"] }
+      }
+    }
+  ]
+}
