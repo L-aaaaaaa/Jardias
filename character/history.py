@@ -32,7 +32,17 @@ class History:
         except OSError:
             pass
 
-    def append_pair(self, user: str, assistant: str):
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    def append_pair(self, user: str, assistant: str, ts: str | None = None):
+        now = ts or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.messages.append({"role": "user", "content": user, "time": now})
         self.messages.append({"role": "assistant", "content": assistant, "time": now})
+
+    def append_trigger(self, content: str):
+        """追加 system_trigger 消息（时策触发，隐式注入）。"""
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.messages.append({"role": "system_trigger", "content": content, "time": now})
+
+    def append_assistant(self, content: str):
+        """追加 assistant 消息（用于时策触发后的 LLM 回复，不重复记录 trigger）。"""
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.messages.append({"role": "assistant", "content": content, "time": now})

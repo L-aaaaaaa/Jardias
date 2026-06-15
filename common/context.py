@@ -120,10 +120,10 @@ def strip_context_wrapper(message: str) -> str:
     if not message:
         return message
 
-    # 模式：## 本次用户消息 开头，含 时间戳行 和 text 代码围栏
+    # 模式：## 本次用户消息 开头，含 时间戳行（支持 t_sent 后缀）和 text 代码围栏
     pattern = (
         r'^##\s*本次用户消息\s*'
-        r'\n+###\s*\[[^\]]+\]\s*user:\s*'
+        r'\n+###\s*\[[^\]]+\]\s*user(?:\s*\(t_sent=\d+ms\))?:\s*'
         r'\n+```text\s*\n'
         r'(.*?)'
         r'\n```\s*$'
@@ -144,8 +144,20 @@ def _build_recent_history(history: list[dict], keep_turns: int = 6) -> str:
     for msg in history[cutoff:]:
         role = msg.get("role", "unknown")
         t = msg.get("time", "")
-        header = f"[{t}] {role}:" if t else f"{role}:"
+        if role == "system_trigger":
+            # 时策触发：不编码为对话，而是作为注入提示
+            header = f"[时策触发 {t}]"
+        else:
+            header = f"[{t}] {role}:" if t else f"{role}:"
         content = msg.get("content", "")
+        # 清理 assistant 消息中残留的推理文本
+        if role == "assistant":
+            # 去掉 [思考] 头到实际回复之间的推理文本
+            content = _re_module.sub(r'\[思考\]\n', '', content)
+            content = _re_module.sub(r'\n.+?\n(?=[^\[<])', '\n', content)
+            # 去掉 <think>...</think>
+            content = _re_module.sub(r'<think>.*?</think>', '', content, flags=_re_module.DOTALL)
+            content = content.strip()
         fence = "```"
         if fence in content:
             fence = "````"
@@ -214,19 +226,20 @@ def form_full_context(config, history: list[dict], user_input: str,
 
     # messages[3]: 本次用户消息
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    t_sent_ms = int(datetime.now().timestamp() * 1000)
     if image_url:
         clean_input = _re_module.sub(
             r'(?:https?://[^\s]+|[A-Za-z]:[\\/][^\s]+)\.(?:png|jpg|jpeg|webp|gif|bmp)(?:\?[^\s]*)?\s*',
             '', user_input, flags=_re_module.IGNORECASE
         )
         clean_input = clean_input.strip() or user_input
-        text_block = f"## 本次用户消息\n\n### [{now}] user:\n\n```text\n{clean_input}\n```"
+        text_block = f"## 本次用户消息\n\n### [{now}] user (t_sent={t_sent_ms}ms):\n\n```text\n{clean_input}\n```"
         user_content = [
             {"type": "image_url", "image_url": {"url": image_url}},
             {"type": "text", "text": text_block},
         ]
     else:
-        user_content = f"## 本次用户消息\n\n### [{now}] user:\n\n```text\n{user_input}\n```"
+        user_content = f"## 本次用户消息\n\n### [{now}] user (t_sent={t_sent_ms}ms):\n\n```text\n{user_input}\n```"
     result.append({"role": "user", "content": user_content})
 
     return result

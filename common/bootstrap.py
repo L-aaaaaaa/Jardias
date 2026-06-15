@@ -116,6 +116,7 @@ def bootstrap(provider: str, model: str, character_name: str = "default"):
     bootstrap_summary(len(ctx.history.messages), ctx.provider, ctx.model, len(tool_defs))
 
     _setup_llm_executor(ctx)
+    _setup_scheduler(ctx)
     return ctx
 
 
@@ -274,3 +275,35 @@ def _setup_llm_executor(ctx):
 
     set_llm_executor(execute)
     logger.info(f"  [LLM-TOOL] executor ready | provider={ctx.provider} | base={ctx.model_config.base_url}")
+
+
+def _setup_scheduler(ctx):
+    """创建 TemporalScheduler 并注入 on_job_fire 回调。"""
+    import asyncio
+    import os
+    from schedule import TemporalScheduler
+    from schedule.strategies import wall_ms
+    from tool.builtin import set_scheduler as _set_tool_scheduler
+
+    store_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             "character_data", "_schedules")
+    os.makedirs(store_dir, exist_ok=True)
+    store_path = os.path.join(store_dir, "schedules.json")
+
+    async def on_job_fire(fire_ctx):
+        """时策触发回调：只写入 trigger 到历史，不调 LLM。
+        conversation_loop 统一处理展示，避免重复回复。"""
+        from character.history import History
+        from character import get_history_path
+
+        trigger_msg = fire_ctx.format_trigger()
+        history_path = str(get_history_path(fire_ctx.character_id))
+        hist = History(history_path).load()
+        hist.append_trigger(trigger_msg)
+        hist.save()
+        logger.info(f"[时策] 触发完成 | {fire_ctx.character_id} | {trigger_msg[:50]}...")
+
+    scheduler = TemporalScheduler(store_path, on_job_fire=on_job_fire)
+    _set_tool_scheduler(scheduler)
+    asyncio.ensure_future(scheduler.start())
+    logger.info(f"  [时策] 调度器已启动 | 存储: {store_path}")

@@ -26,7 +26,7 @@ class Schedule:
 
 @dataclass
 class ScheduleParams:
-    """schedule_task 工具的参数。"""
+    """shice_schedule 工具的参数。"""
     message: str
     timestamps: list[int]  # 绝对时间戳（毫秒），LLM 直接计算
     character_id: str | None = None

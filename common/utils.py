@@ -2,6 +2,7 @@
 utils.py — 项目全局可复用工具
 """
 import sys
+from datetime import datetime as _dt
 
 # ════════════════════════════════════════════════════════════════
 
@@ -10,8 +11,9 @@ _silent: bool = False
 
 # ── ANSI 颜色 ──
 _YELLOW = "\033[33m"
+_BLUE = "\033[34m"
 _RESET = "\033[0m"
-_COLORS = {"yellow": _YELLOW}
+_COLORS = {"yellow": _YELLOW, "blue": _BLUE}
 
 _stream_color: str | None = None  # 全局流式颜色标记
 
@@ -38,7 +40,7 @@ def get_silent() -> bool:
     return _silent
 
 
-def separate_print(separator: str = "─", title: str = "", length: int = 30,
+def separate_print(separator: str = "─", title: str = "", length: int = 50,
         end: bool = False) -> None:
     """
     流式输出分隔线 — 用户视角直出，不经 logger。
@@ -59,9 +61,14 @@ def separate_print(separator: str = "─", title: str = "", length: int = 30,
 
     # 根据标题自动切换流式颜色
     if title in ("回复", "工具调用"):
-        set_stream_color(None)
+        set_stream_color("blue")
     elif title in ("推理过程", "思考"):
         set_stream_color("yellow")
+
+    # ── 时策回复也加时间 ──
+    if title in ("推理过程", "回复", "工具调用", "时策回复"):
+        t = _dt.now().strftime("%H:%M:%S")
+        title = f"{title} {t}"
 
     # 拼接标签
     label = f"【{_display_name}】{title}" if _display_name else title
@@ -78,10 +85,9 @@ def separate_print(separator: str = "─", title: str = "", length: int = 30,
 
 
 def stream_print(content: str, end: str = "", flush: bool = True, color: str | None = None) -> None:
-    """逐字流式输出到终端。color 参数优先级高于全局 set_stream_color。"""
-    if _silent:
+    """逐字流式输出到终端。跳过空白内容（避免 MiniMax thinking→content 切换时空行泛滥）。"""
+    if _silent or not content.strip():
         return
-    # 确定颜色（参数 > 全局状态）
     use_color = color or _stream_color
     ansi_code = _COLORS.get(use_color, "") if use_color else ""
     try:

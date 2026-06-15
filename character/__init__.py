@@ -106,8 +106,9 @@ def ensure_dirs(name: str) -> Path:
 
 
 def list_characters() -> list[str]:
-    """列出所有已有角色（显示名）。"""
+    """列出所有已有角色（显示名）。排除系统目录（以 _ 开头）。"""
     root = Path(CHAR_ROOT)
     if not root.exists():
         return []
-    return [get_display_name(d.name) for d in root.iterdir() if d.is_dir()]
+    return [get_display_name(d.name) for d in root.iterdir()
+            if d.is_dir() and not d.name.startswith('_')]

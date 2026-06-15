@@ -544,6 +544,79 @@ async def _handle_send_to_character(arguments: dict) -> str:
     )
 
 
+# ── 时策工具 ──
+
+_scheduler: object | None = None  # 由 bootstrap 注入
+
+
+def set_scheduler(scheduler):
+    """注入 TemporalScheduler 实例（bootstrap 时调用）。"""
+    global _scheduler
+    _scheduler = scheduler
+
+
+def _handle_shice_schedule_add(arguments: dict) -> str:
+    """时策工具：LLM 传入绝对时间戳列表，注册定时任务。"""
+    if _scheduler is None:
+        return "[Error] 时策调度器未初始化"
+
+    timestamps = arguments.get("timestamps", [])
+    message = arguments.get("message", "")
+    if not timestamps or not message:
+        return "[Error] timestamps 和 message 为必填参数"
+
+    from schedule.strategies import wall_ms
+    now = wall_ms()
+    # 过滤已过期的时间戳（延迟 ≤ 60s 的保留，让 missed handler 处理）
+    valid = [t for t in timestamps if t >= now - 60_000]
+    if not valid:
+        return "[Error] 所有时间戳均已过期超过 60 秒"
+
+    job_id = _scheduler.add_recurring(
+        name=f"时策-{message[:20]}",
+        message=message,
+        timestamps=valid,
+        character_id=_current_actor,
+    )
+
+    dropped = len(timestamps) - len(valid)
+    info = f"已注册 {len(valid)} 个时间点"
+    if dropped:
+        info += f"（{dropped} 个已过期被忽略）"
+
+    t0 = valid[0]
+    delay = (t0 - now) / 1000.0
+    import time as _t
+    due_str = _t.strftime("%H:%M:%S", _t.localtime(t0 / 1000.0))
+    return f"[OK] {info}\n  首次触发: {due_str}（{delay:.1f}秒后）\n  job_id: {job_id}"
+
+
+def _handle_shice_schedule_list() -> str:
+    """列出所有活跃的时策任务。"""
+    if _scheduler is None:
+        return "[OK] 时策调度器未初始化，无活跃任务"
+    jobs = _scheduler.list_jobs()
+    if not jobs:
+        return "[OK] 无活跃的时策任务"
+    lines = [f"共 {len(jobs)} 个活跃任务:"]
+    for j in jobs:
+        lines.append(f"  [{j['job_id']}] {j['name']} | 已触发 {j['fired']}/{j['total']} | 剩余 {j['remaining']}")
+    return "\n".join(lines)
+
+
+def _handle_shice_schedule_cancel(arguments: dict) -> str:
+    """取消时策任务。"""
+    if _scheduler is None:
+        return "[Error] 时策调度器未初始化"
+    job_id = arguments.get("job_id", "")
+    if not job_id:
+        return "[Error] 需要 job_id 参数（可通过 shice_schedule_list 获取）"
+    ok = _scheduler.remove_remaining(job_id)
+    if ok:
+        return f"[OK] 已取消任务 {job_id}"
+    return f"[Error] 任务 {job_id} 不存在或已结束"
+
+
 # ── 系统工具 ──
 
 def _handle_bash(arguments: dict) -> str:
@@ -1035,6 +1108,46 @@ def _ensure_tools():
                 },
                 fn=None,
             ),
+            # ── 时策工具 ──
+            ToolDef(
+                name="shice_schedule_add",
+                description=(
+                    "注册定时任务。当用户要求在未来某个时间执行操作时调用。\n\n"
+                    "参数：\n"
+                    "- timestamps: 绝对时间戳列表（毫秒）。一次传入所有时间点，不要拆多次调用。"
+                    "例如「15秒后开始每10秒共3次」→ 传 3 个值 [t_sent+15000, t_sent+25000, t_sent+35000]。\n"
+                    "- message: 触发时要执行的任务内容。\n\n"
+                    "注意：根据上下文标注的 t_sent 自行计算绝对时间戳。"
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "timestamps": {"type": "array", "items": {"type": "integer"}},
+                        "message": {"type": "string"},
+                    },
+                    "required": ["timestamps", "message"]
+                },
+                fn=None,
+            ),
+            ToolDef(
+                name="shice_schedule_list",
+                description="列出所有活跃的时策定时任务及其状态（总数/已触发/剩余）。",
+                parameters={"type": "object", "properties": {}, "required": []},
+                fn=None,
+            ),
+            ToolDef(
+                name="shice_schedule_cancel",
+                description=(
+                    "取消指定的时策任务。\n"
+                    "参数 job_id: 任务 ID（通过 shice_schedule_list 获取）。"
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {"job_id": {"type": "string"}},
+                    "required": ["job_id"]
+                },
+                fn=None,
+            ),
             # ── 系统工具 ──
             ToolDef(
                 name="bash",
@@ -1098,6 +1211,9 @@ _BUILTIN_HANDLERS.update({
     "create_character": _handle_create_character,
     "list_characters": _handle_list_characters,
     "send_to_character": _handle_send_to_character,
+    "shice_schedule_add": _handle_shice_schedule_add,
+    "shice_schedule_list": _handle_shice_schedule_list,
+    "shice_schedule_cancel": _handle_shice_schedule_cancel,
     "bash": _handle_bash,
     "web_fetch": _handle_web_fetch,
     "web_search": _handle_web_search,

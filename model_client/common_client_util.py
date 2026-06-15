@@ -1,4 +1,4 @@
-import json
+﻿import json
 import os
 import re
 import time
@@ -72,7 +72,7 @@ def form_stream(full_context_list: list, client=None, model_config=None):
 # ── 流式响应收集 ──
 
 
-def collect_round(stream, reasoning_field: str = "reasoning_details") -> RoundOutput:
+def collect_round(stream, reasoning_field: str = "reasoning_details", is_tool_round: bool = False) -> RoundOutput:
     """
     消费流式响应，边接收边流式输出，同时返回结构化结果。
     reasoning_field: "reasoning_details" (MiniMax) | "reasoning_content" (DeepSeek/DashScope)
@@ -81,6 +81,7 @@ def collect_round(stream, reasoning_field: str = "reasoning_details") -> RoundOu
     _think_parts: list[str] = []  # <think> 内容独立存储，不混入 reasoning_parts
     _printed_reasoning_len = 0  # 诊断：实际 stream_print 输出的字符数
     reasoning_header = False
+    content_header = False
     response_header = False
     # MiniMax <think> 标签状态机 — 检测嵌在 content 里的思考内容
     _in_think = False
@@ -102,6 +103,13 @@ def collect_round(stream, reasoning_field: str = "reasoning_details") -> RoundOu
             reasoning_header = True
             set_stream_color("yellow")
             separate_print(title="推理过程")
+
+    def _ensure_content_header():
+        """非工具轮次：从推理切换到回复。工具轮次静默。"""
+        nonlocal content_header
+        if not content_header and not is_tool_round:
+            content_header = True
+            separate_print(title="回复")
 
     for chunk in stream:
         # 尾 chunk 可能不带 choices（仅含 usage），跳过
@@ -183,7 +191,7 @@ def collect_round(stream, reasoning_field: str = "reasoning_details") -> RoundOu
                     if _new_buf_lines:
                         if not response_header:
                             response_header = True
-                            separate_print(title="回复")
+                            _ensure_content_header()
                         merged = "\n".join(_new_buf_lines)
                         content_parts.append(merged)
                         stream_print(merged)
@@ -219,7 +227,7 @@ def collect_round(stream, reasoning_field: str = "reasoning_details") -> RoundOu
                     if post:
                         if not response_header:
                             response_header = True
-                            separate_print(title="回复")
+                            _ensure_content_header()
                         content_parts.append(post)
                         stream_print(post)
                 else:
@@ -484,6 +492,7 @@ async def _run_common_round(
         reasoning_field: str = "reasoning_details",
         reasoning_inline: bool = False,
         character_name: str = "",
+        is_tool_round: bool = False,
 ):
     """公共单轮执行：流式请求 + 响应收集 + assistant 消息组装。
 
@@ -491,6 +500,7 @@ async def _run_common_round(
     reasoning_inline: True → reasoning 嵌入 assistant 消息 (DeepSeek)
                      False → reasoning 作为独立消息 (MiniMax/DashScope)
     character_name: 角色名，非空时每次 API 调用前写入 context_latest.md
+    is_tool_round: 是否为工具调用的后续轮次（True 时不重复打印"回复"标题）
     """
     round_start(iteration + 1, len(messages))
 
@@ -500,7 +510,7 @@ async def _run_common_round(
 
     stream = form_stream(messages, model_config=model_config)
     t0 = time.time()
-    output = collect_round(stream, reasoning_field=reasoning_field)
+    output = collect_round(stream, reasoning_field=reasoning_field, is_tool_round=is_tool_round)
     print()  # 流式输出收尾换行
     if output.content.strip():
         separate_print(end=True)
@@ -553,6 +563,7 @@ async def reason_action_loop(
             reasoning_field=reasoning_field,
             reasoning_inline=reasoning_inline,
             character_name=character_name,
+            is_tool_round=(i > 0),
         )
         last_content = output.content
 
@@ -567,7 +578,11 @@ async def reason_action_loop(
 
                 _log_tool_result_common(tc.name, result)
                 if not get_silent() and tc.name != "send_to_character":
-                    print(f"\n  [OK] {tc.name}:\n{result[:300]}{'...' if len(result) > 300 else ''}")
+                    if tc.name == "shice_schedule_add":
+                        # 时策工具静默，不打断 LLM 回复流
+                        logger.info(f"  [OK] {tc.name}: {result[:120]}")
+                    else:
+                        print(f"\n  [OK] {tc.name}:\n{result[:300]}{'...' if len(result) > 300 else ''}")
                 messages.append({
                     "role": "tool",
                     "tool_call_id": f"call_{i}_{idx}",
@@ -667,14 +682,16 @@ def dump_context(character_name: str, messages: list[dict]):
     blocks: list[str] = []
 
     def _flatten(msg: dict) -> str:
-        """将一条消息转为可读文本，含 reasoning_content + content + tool_calls + tool_call_id。"""
+        """将一条消息转为可读文本。"""
         content = msg.get("content")
         parts: list[str] = []
 
-        # 推理/思考内容（assistant 消息的 reasoning_content）
+        # 推理内容单独一行标注
+        _reasoning_added = False
         if msg.get("role") == "assistant" and msg.get("reasoning_content"):
-            rc = msg["reasoning_content"]
-            parts.append(f"[思考]\n{rc}")
+            # reasoning 不在 context_latest.md 中展示，避免和 content 混淆
+            pass
+            _reasoning_added = True
 
         if isinstance(content, list):
             for item in content:
@@ -685,7 +702,13 @@ def dump_context(character_name: str, messages: list[dict]):
                 else:
                     parts.append(item.get("text", ""))
         elif content:
-            parts.append(str(content))
+            # 仅对 user 消息剥离 form_full_context 包裹
+            if msg.get("role") == "user":
+                from common.context import strip_context_wrapper
+                clean = strip_context_wrapper(str(content))
+                parts.append(clean)
+            else:
+                parts.append(str(content))
 
         if msg.get("role") == "tool":
             tc_name = msg.get("name", "")
@@ -731,10 +754,9 @@ def dump_context(character_name: str, messages: list[dict]):
             if m.get("_reasoning") and role == "assistant":
                 continue
             text = _flatten(m)
-            # 前一条若是独立推理消息，将其内容以 [思考] 前缀合并到本条
+            # 前一条若是独立推理消息，跳过不渲染（避免 [思考] 混入对话）
             if i > 0 and round_msgs[i - 1].get("_reasoning"):
-                prev_reasoning = round_msgs[i - 1].get("content", "")
-                text = f"[思考]\n{prev_reasoning}\n\n{text}"
+                continue
             fence = _choose_fence(text)
             round_lines.append(f"### [{now}] {role}:\n\n{fence}text\n{text}\n{fence}")
 
@@ -757,3 +779,4 @@ def dump_context(character_name: str, messages: list[dict]):
         f.write("\n\n".join(blocks) + "\n")
         f.flush()
         os.fsync(f.fileno())
+
