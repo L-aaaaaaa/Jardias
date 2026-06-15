@@ -96,7 +96,11 @@ def build_config_context(config) -> str:
 {tool_names}
 
 图片策略: 收到图片但当前引擎无 vision → 通过 update_runtime 切到有 vision 的引擎。
-思考语言: 中文，除非涉及英文术语或代码。
+
+### 思考语言（重要）
+你的推理过程（reasoning/thinking）、内心独白、工具调用前的分析，一律使用中文。
+仅在以下情况可以使用英文：(1) 代码片段 (2) 技术术语无对应中文时 (3) 用户明确使用英文提问。
+注意：这不是建议，是硬性要求。使用英文思考视为违规。
 
 ### 角色管理
 {_build_character_context()}

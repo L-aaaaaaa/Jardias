@@ -22,9 +22,10 @@ def detect_image_url(user_input: str) -> str | None:
 
 
 def detect_local_image(user_input: str) -> str | None:
+    # 使用非贪婪匹配，支持路径中的空格（如 "能代 · 碧蓝航线"）
     m = _re_module.search(
-        rf'[A-Za-z]:[\\/][^\s]+{_IMG_EXTS}{_IMG_EXT_END}'
-        rf'|(?:(?:~|\.)?/[^\s]+){_IMG_EXTS}{_IMG_EXT_END}',
+        rf'[A-Za-z]:[\\/].+?{_IMG_EXTS}{_IMG_EXT_END}'
+        rf'|(?:(?:~|\.)?/.+?){_IMG_EXTS}{_IMG_EXT_END}',
         user_input, _re_module.IGNORECASE
     )
     if not m:

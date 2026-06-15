@@ -36,6 +36,23 @@ def print_character_menu(character_list: list[str]) -> None:
     separator_to_terminal("—", 20)
 
 
+def _build_engine_menu() -> tuple[list[str], dict[int, tuple[str, str]]]:
+    """
+    从 MODEL_NAMES 动态构建引擎选择菜单。
+    返回 (显示行列表, {序号: (provider, model_short)})。
+    """
+    from actor_config.model_resolver import MODEL_NAMES
+    display_lines: list[str] = []
+    idx_map: dict[int, tuple[str, str]] = {}
+    i = 1
+    for prov_name, models in MODEL_NAMES.items():
+        for short_name, full_name in models.items():
+            display_lines.append(f"{prov_name} / {short_name} ({full_name})")
+            idx_map[i] = (prov_name, short_name)
+            i += 1
+    return display_lines, idx_map
+
+
 def select_or_create_character() -> tuple[str, str, str] | None:
     """
     显示角色选择菜单，返回 (角色名, provider, model) 或 None（退出）。
@@ -77,20 +94,26 @@ def select_or_create_character() -> tuple[str, str, str] | None:
             else:
                 system_prompt = "你是一个智能助手，名字叫 #{character_name}。"
 
+            # ── 动态引擎选择（从 providers.json5 自动同步）──
+            engine_display, engine_map = _build_engine_menu()
             print("\n选择默认引擎：")
-            print("  [1] MiniMax (2.7快)")
-            print("  [2] DeepSeek (v4-pro)")
-            print("  [3] DeepSeek (chat)")
-            print("  [4] 自定义")
-            engine_choice = input("请选择 [1/2/3/4]: ").strip()
+            for i, display in enumerate(engine_display):
+                print(f"  [{i + 1}] {display}")
+            custom_idx = len(engine_display) + 1
+            print(f"  [{custom_idx}] 自定义")
 
-            if engine_choice == "2":
-                provider, model = "deepseek", "v4-pro"
-            elif engine_choice == "3":
-                provider, model = "deepseek", "chat"
-            elif engine_choice == "4":
-                provider = input("Provider (minimax/deepseek/dashscope): ").strip()
-                model = input("Model: ").strip()
+            engine_choice = input(f"请选择 [1-{custom_idx}]: ").strip()
+
+            if engine_choice.isdigit():
+                idx = int(engine_choice)
+                if 1 <= idx <= len(engine_display):
+                    provider, model = engine_map[idx]
+                elif idx == custom_idx:
+                    provider = input("Provider: ").strip()
+                    model = input("Model: ").strip()
+                else:
+                    print("无效选择，使用默认引擎")
+                    provider, model = "minimax", "2.7快"
             else:
                 provider, model = "minimax", "2.7快"
 

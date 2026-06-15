@@ -8,7 +8,7 @@ from openai import OpenAI
 from character import get_character_dir
 from common.actor_log import round_start, round_end, max_rounds_reached, format_api_ok
 from common.logger import logger
-from common.utils import separate_print, stream_print, set_display_name, get_silent
+from common.utils import separate_print, stream_print, set_display_name, get_silent, set_stream_color
 from data_shape import AIModelProvider, AIModelConfig, ToolCall, RoundOutput, ChatResult
 from .model_context import set_round_meta, pop_switch
 
@@ -100,6 +100,7 @@ def collect_round(stream, reasoning_field: str = "reasoning_details") -> RoundOu
         nonlocal reasoning_header
         if not reasoning_header:
             reasoning_header = True
+            set_stream_color("yellow")
             separate_print(title="推理过程")
 
     for chunk in stream:

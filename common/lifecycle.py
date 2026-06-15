@@ -72,10 +72,9 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
                 record_model_failure(ctx.provider, e)
             # ── 自动故障转移 ──
             # 图片消息需要 vision 能力，优先选有 vision 的供应商
+            # 如果所有 vision 供应商都失败，不尝试不支持图片的供应商（必失败）
             need_vision = bool(image_url)
-            fallback = _next_vision_provider(ctx.provider, tried) if need_vision else None
-            if not fallback:
-                fallback = _next_provider(ctx.provider, tried)
+            fallback = _next_vision_provider(ctx.provider, tried) if need_vision else _next_provider(ctx.provider, tried)
             if fallback:
                 tried.add(fallback)
                 fallback_model = _pick_fallback_model(fallback, vision_first=need_vision)
@@ -119,9 +118,13 @@ def _collect_round_meta(round_ok: bool, ctx) -> str:
     return new_ctx
 
 
-def _post_round(ctx, user_input: str, messages: list[dict]):
-    """收尾：存历史、重载配置、轮次 +1。"""
-    reply = extract_reply(messages)
+def _post_round(ctx, user_input: str, messages: list[dict], round_ok: bool = True):
+    """收尾：存历史、重载配置、轮次 +1。round_ok=False 时记录失败摘要。"""
+    if round_ok:
+        reply = extract_reply(messages)
+    else:
+        # 所有引擎均失败时，记录可读的错误摘要，而非空消息
+        reply = _build_failure_reply(ctx, messages)
     ctx.history.append_pair(user_input, reply)
     ctx.history.save()
     ctx.config = load_config(ctx.character_name, config_dir=ctx.config_dir)
@@ -129,9 +132,20 @@ def _post_round(ctx, user_input: str, messages: list[dict]):
     ctx.turn_num += 1
 
 
-async def _post_round_async(ctx, user_input: str, messages: list[dict]):
+def _build_failure_reply(ctx, messages: list[dict]) -> str:
+    """构建失败时的错误摘要消息。"""
+    from model_client.model_context import last_round
+    err = last_round.error if last_round.error else "未知错误"
+    return (
+        f"[本轮对话失败] 引擎 {ctx.provider}/{ctx.model} 返回错误，"
+        f"且无可用备选供应商。错误: {err}。"
+        f"你可以尝试切换引擎（update_runtime）或简化请求后重试。"
+    )
+
+
+async def _post_round_async(ctx, user_input: str, messages: list[dict], round_ok: bool = True):
     """收尾 + L1 压缩（需要 async 上下文）。"""
-    _post_round(ctx, user_input, messages)
+    _post_round(ctx, user_input, messages, round_ok)
     await check_and_compress(ctx.character_name, ctx.history.messages)
 
 
@@ -285,7 +299,7 @@ async def conversation_loop(ctx, allow_switch: bool = False):
         # ── 执行 ──
         round_ok, messages = await _run_turn(ctx, user_input, image_url, switch_note, round_context)
         round_context = _collect_round_meta(round_ok, ctx)
-        await _post_round_async(ctx, user_input, messages)
+        await _post_round_async(ctx, user_input, messages, round_ok)
 
         # ── 角色切换 ──
         next_character = clear_pending_switch()

@@ -668,6 +668,14 @@ async def _read_file(path: str, line_range: str | None = None) -> str:
         resolved = _resolve_path(path)
         if not resolved.exists():
             return f"[Error] file not found: {path}"
+        # 图片/二进制文件不应直接读取，提示使用 vision 能力
+        img_exts = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".ico", ".tiff", ".svg"}
+        if resolved.suffix.lower() in img_exts:
+            return (
+                f"[提示] {path} 是图片文件，不要用 read_file 读取。"
+                f"如果你有 vision 能力，请直接要求用户发送图片给你看；"
+                f"如果没有 vision，请用 update_runtime 切换到 vision 模型。"
+            )
         content = resolved.read_text(encoding="utf-8", errors="replace")
         if line_range:
             parts = line_range.split(",")

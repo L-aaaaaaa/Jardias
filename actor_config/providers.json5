@@ -7,7 +7,8 @@
       "base_url": "https://api.minimax.chat/v1",
       "models": {
         "2.7快": { "id": "MiniMax-M2.7-highspeed", "caps": ["text", "tool_call", "thinking", "fast"] },
-        "2.7":   { "id": "MiniMax-M2.7",           "caps": ["text", "tool_call", "thinking"] }
+        "2.7":   { "id": "MiniMax-M2.7",           "caps": ["text", "tool_call", "thinking"] },
+        "M3":    { "id": "MiniMax-M3",              "caps": ["text", "tool_call", "thinking", "vision", "long_context", "reasoning_stream"] }
       }
     },
     {
