@@ -3,7 +3,7 @@ character — 角色管理逻辑（数据在 character_data/ 下）
 
 目录结构:
   character_data/{YYYYMMDDHHMM-name}/
-    config.json       — AgentConfig（identity + runtime）
+    config.json       — ActorConfig（identity + runtime）
     history.json      — 对话历史（原始，不可删改）
     summaries/
       L1/             — L1 层摘要文件（每条一次压缩事件）

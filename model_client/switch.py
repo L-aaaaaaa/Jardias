@@ -1,5 +1,5 @@
 """switch — 模型切换逻辑。"""
-from agent_config import load_config, resolve_model, MODEL_NAMES, get_model_capabilities
+from actor_config import load_config, resolve_model, MODEL_NAMES, get_model_capabilities
 from model_client import minimax, deepseek, dashscope
 
 _CHAT_FNS = {

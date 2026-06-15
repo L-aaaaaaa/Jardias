@@ -7,9 +7,9 @@ import json
 from datetime import datetime
 
 from common.logger import logger
-from tool.llm_tool import llm_tool
 from data_shape import L1Summary
-from . import get_summaries_dir, get_l2_path, get_l3_path
+from tool.llm_tool import llm_tool
+from . import get_summaries_dir
 
 
 # ── 旁路小模型：对话摘要 ──
@@ -20,29 +20,29 @@ from . import get_summaries_dir, get_l2_path, get_l3_path
         "segments": "array of {from: int, to: int, topic: string, detail: string}"
     },
     system=(
-        "你是对话分段摘要器。阅读带 [轮次 N] 标记的对话记录，按话题变化切分为多个段。\n\n"
-        "## 分段原则\n"
-        "1. 话题明显变化时切分（新任务、新方向、新发现、方法论转折）\n"
-        "2. 每段必须有**独立的认知价值**——如果两段信息完全重复，合并为一段\n"
-        "3. 碎片/闲聊可合并到相邻话题段，不必单独拆出\n"
-        "4. 最少 3 段，最多 12 段。宁可多拆也不要丢信息\n\n"
-        "## 每段的 detail 必须包含\n"
-        "- 做了什么 → 用了什么方法 → 得到了什么结论\n"
-        "- 如果有具体数值（通过率、参数值、错误类型），写进去\n"
-        "- 如果有命名实体（角色名、模型名、文件名），写进去\n"
-        "- 禁止「进行了测试」「讨论了配置」这类空泛说法\n\n"
-        "## 正确 vs 错误示例\n"
-        "✅「创建角色小高配合完成 15 个工具测试，通过率 93.3%（14/15），仅 web_search 超时未通过」\n"
-        "✅「用户提供照片测试 vision 能力。Agent 发现角色配置标注千问3.6+但实际引擎为 MiniMax-M2.7——角色配置≠实际引擎」\n"
-        "❌「共 15 轮对话，涉及引擎切换 + 图片理解」\n"
-        "❌「用户要求测试配置修改，Agent 进行了修改和验证」\n\n"
-        "## 硬约束\n"
-        "1. from/to 从 [轮次 N] 标记精确读取\n"
-        "2. topic: 15 字以内\n"
-        "3. 禁止出现「共 N 轮」「涉及: X, Y, Z」等模板化表述\n"
-        "4. 必须覆盖全部可见轮次，不允许遗漏\n"
-        "5. 最终输出必须是纯 JSON 数组，以 [ 开头，不要加任何 markdown 标签或解释文字\n"
-        "6. ⚠️ detail 中避免使用英文双引号 \"，用中文引号「」代替，否则 JSON 解析会失败\n"
+            "你是对话分段摘要器。阅读带 [轮次 N] 标记的对话记录，按话题变化切分为多个段。\n\n"
+            "## 分段原则\n"
+            "1. 话题明显变化时切分（新任务、新方向、新发现、方法论转折）\n"
+            "2. 每段必须有**独立的认知价值**——如果两段信息完全重复，合并为一段\n"
+            "3. 碎片/闲聊可合并到相邻话题段，不必单独拆出\n"
+            "4. 最少 3 段，最多 12 段。宁可多拆也不要丢信息\n\n"
+            "## 每段的 detail 必须包含\n"
+            "- 做了什么 → 用了什么方法 → 得到了什么结论\n"
+            "- 如果有具体数值（通过率、参数值、错误类型），写进去\n"
+            "- 如果有命名实体（角色名、模型名、文件名），写进去\n"
+            "- 禁止「进行了测试」「讨论了配置」这类空泛说法\n\n"
+            "## 正确 vs 错误示例\n"
+            "✅「创建角色小高配合完成 15 个工具测试，通过率 93.3%（14/15），仅 web_search 超时未通过」\n"
+            "✅「用户提供照片测试 vision 能力。actor 发现角色配置标注千问3.6+但实际引擎为 MiniMax-M2.7——角色配置≠实际引擎」\n"
+            "❌「共 15 轮对话，涉及引擎切换 + 图片理解」\n"
+            "❌「用户要求测试配置修改，actor 进行了修改和验证」\n\n"
+            "## 硬约束\n"
+            "1. from/to 从 [轮次 N] 标记精确读取\n"
+            "2. topic: 15 字以内\n"
+            "3. 禁止出现「共 N 轮」「涉及: X, Y, Z」等模板化表述\n"
+            "4. 必须覆盖全部可见轮次，不允许遗漏\n"
+            "5. 最终输出必须是纯 JSON 数组，以 [ 开头，不要加任何 markdown 标签或解释文字\n"
+            "6. ⚠️ detail 中避免使用英文双引号 \"，用中文引号「」代替，否则 JSON 解析会失败\n"
     ),
 )
 async def _summarize_conversation(conversation_text: str) -> dict:
@@ -52,9 +52,9 @@ async def _summarize_conversation(conversation_text: str) -> dict:
 
 # ── 阈值配置 ──
 
-L1_CHAR_THRESHOLD = 10_000       # 历史总字符数达到此值触发 L1 压缩
-L1_KEEP_RECENT = 6               # 最近保留不压缩的消息条数
-L2_COUNT_THRESHOLD = 10          # L1 摘要达到此条数触发 L2 压缩
+L1_CHAR_THRESHOLD = 10_000  # 历史总字符数达到此值触发 L1 压缩
+L1_KEEP_RECENT = 6  # 最近保留不压缩的消息条数
+L2_COUNT_THRESHOLD = 10  # L1 摘要达到此条数触发 L2 压缩
 
 
 def l1summary_to_dict(s: L1Summary) -> dict:
@@ -119,7 +119,8 @@ def _analyze_slice(messages: list[dict]) -> tuple[int, str, str, list[str]]:
     events: list[str] = []
     for m in asst_msgs:
         content = m.get("content", "")
-        if "切换" in content and ("引擎" in content or "deepseek" in content.lower() or "千问" in content or "minimax" in content.lower()):
+        if "切换" in content and (
+                "引擎" in content or "deepseek" in content.lower() or "千问" in content or "minimax" in content.lower()):
             if "完成" in content or "成功" in content:
                 events.append("引擎切换")
 
@@ -226,7 +227,8 @@ async def build_l1_llm(character_name: str, messages: list[dict]) -> L1Summary |
     start_msg_idx = user_indices[start_turn_idx]
 
     # 增量切片：新轮次起，保留最近 L1_KEEP_RECENT 条消息不压缩
-    incremental_slice = messages[start_msg_idx:-L1_KEEP_RECENT] if len(messages) > L1_KEEP_RECENT else messages[start_msg_idx:]
+    incremental_slice = messages[start_msg_idx:-L1_KEEP_RECENT] if len(messages) > L1_KEEP_RECENT else messages[
+        start_msg_idx:]
     if len(incremental_slice) < 2:  # 至少需要一轮对话（user + assistant）
         return None
 

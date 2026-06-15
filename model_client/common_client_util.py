@@ -5,12 +5,12 @@ import time
 
 from openai import OpenAI
 
-from data_shape import AIModelProvider, AIModelConfig, ToolCall, RoundOutput, ChatResult
+from character import get_character_dir
+from common.actor_log import round_start, round_end, max_rounds_reached, format_api_ok
 from common.logger import logger
 from common.utils import separate_print, stream_print, set_display_name, get_silent
-from common.agent_log import round_start, round_end, max_rounds_reached, format_api_ok
+from data_shape import AIModelProvider, AIModelConfig, ToolCall, RoundOutput, ChatResult
 from .model_context import set_round_meta, pop_switch
-from character import get_character_dir
 
 
 # ————————————————————————————————————————————————————————
@@ -25,11 +25,11 @@ def form_client(provider: AIModelProvider | None = None):
 
 
 def single_completion(
-    client: OpenAI,
-    model: str,
-    messages: list[dict],
-    temperature: float = 0.0,
-    max_tokens: int = 512,
+        client: OpenAI,
+        model: str,
+        messages: list[dict],
+        temperature: float = 0.0,
+        max_tokens: int = 512,
 ) -> str:
     """非流式单次 API 调用，返回纯文本（@llm_tool 用）。"""
     response = client.chat.completions.create(
@@ -477,12 +477,12 @@ MAX_ITER = 999
 
 
 async def _run_common_round(
-    messages: list[dict],
-    iteration: int,
-    model_config,
-    reasoning_field: str = "reasoning_details",
-    reasoning_inline: bool = False,
-    character_name: str = "",
+        messages: list[dict],
+        iteration: int,
+        model_config,
+        reasoning_field: str = "reasoning_details",
+        reasoning_inline: bool = False,
+        character_name: str = "",
 ):
     """公共单轮执行：流式请求 + 响应收集 + assistant 消息组装。
 
@@ -531,11 +531,11 @@ async def _run_common_round(
 
 
 async def reason_action_loop(
-    messages: list[dict],
-    model_config,
-    reasoning_field: str = "reasoning_details",
-    reasoning_inline: bool = False,
-    character_name: str = "",
+        messages: list[dict],
+        model_config,
+        reasoning_field: str = "reasoning_details",
+        reasoning_inline: bool = False,
+        character_name: str = "",
 ) -> ChatResult:
     """公共 Reason-Action 循环：多轮工具调用，直到模型给出最终回复。
 

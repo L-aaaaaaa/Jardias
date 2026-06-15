@@ -70,14 +70,14 @@ class ToolRegistry:
             self.register(tool_def)
 
 
-# ── 当前操作的 agent 名（由 app.py 设定） ──
-_current_agent: str = "default"
+# ── 当前操作的 actor名（由 app.py 设定） ──
+_current_actor: str = "default"
 
 
-def set_agent(name: str):
-    """设置当前操作用 agent 名（app.py 启动时调用）。"""
-    global _current_agent
-    _current_agent = name
+def set_actor(name: str):
+    """设置当前操作用 actor名（app.py 启动时调用）。"""
+    global _current_actor
+    _current_actor = name
 
 
 # ── 自手术工具实现 ──
@@ -87,11 +87,11 @@ def _handle_update_runtime(arguments: dict) -> str:
     如果 model 变了 → 抛 ModelSwitched 让 app.py 重建 client。
     其他参数 → 直接写 JSON，下轮生效。
     """
-    from agent_config import load_config, save_config
+    from actor_config import load_config, save_config
     from model_client.model_context import resolve_provider, get_actual_model, is_provider_available, \
         get_circuit_status
 
-    config = load_config(_current_agent)
+    config = load_config(_current_actor)
     rt = config.runtime
     actual_model = get_actual_model()  # 实际运行引擎（fallback 后可能与文件不同）
 
@@ -179,18 +179,18 @@ def _handle_update_runtime(arguments: dict) -> str:
     if not changes:
         return "[OK] no changes (all values match current)"
 
-    save_config(config, _current_agent)
+    save_config(config, _current_actor)
 
     if model_changed:
         provider = resolve_provider(rt.model)
         if provider is None:
             return f"[Error] 无法解析模型 '{rt.model}' 的 provider。可用模型: 2.7快, 2.7, chat, 千问3.6+, kimi 2.5, glm-5, M2.5"
         if rt.model == provider:
-            from agent_config import MODEL_NAMES
+            from actor_config import MODEL_NAMES
             first_model = next(iter(MODEL_NAMES[provider].keys()))
             rt.model = first_model
         rt.provider = provider
-        save_config(config, _current_agent)
+        save_config(config, _current_actor)
         from model_client.model_context import request_switch
         request_switch(provider, rt.model)
         return f"[OK] runtime updated: {', '.join(changes)} → 将切换至 {provider}/{rt.model}"
@@ -202,9 +202,9 @@ def _handle_update_identity(arguments: dict) -> str:
     """更新身份参数（system_prompt/role/description/max_iterations 任意组合）。
     写 JSON 后下轮生效。
     """
-    from agent_config import load_config, save_config
+    from actor_config import load_config, save_config
 
-    config = load_config(_current_agent)
+    config = load_config(_current_actor)
     ident = config.identity
 
     changes = []
@@ -231,7 +231,7 @@ def _handle_update_identity(arguments: dict) -> str:
     if not changes:
         return "[OK] no changes"
 
-    save_config(config, _current_agent)
+    save_config(config, _current_actor)
     return f"[OK] identity updated: {', '.join(changes)}"
 
 
@@ -249,7 +249,7 @@ async def _handle_summarize_conversation(arguments: dict) -> str:
     keep_recent_turns = int(arguments.get("keep_recent_turns", 6))
     topic_hint = arguments.get("topic", "")
 
-    history_path = get_history_path(_current_agent)
+    history_path = get_history_path(_current_actor)
     if not history_path.exists():
         return "[Error] 无历史记录"
 
@@ -289,7 +289,7 @@ async def _handle_summarize_conversation(arguments: dict) -> str:
         key_events=events,
     )
 
-    saved_path = save_l1(_current_agent, summary)
+    saved_path = save_l1(_current_actor, summary)
 
     lines = [
         f"[摘要已保存] {summary.to_context_string()}",
@@ -312,8 +312,8 @@ async def _handle_create_character(arguments: dict) -> str:
     provider_arg = arguments.get("provider")  # 可能为 None
 
     from character.registry import registry
-    from data_shape import AgentConfig, IdentityConfig, RuntimeConfig
-    from agent_config import MODEL_NAMES
+    from data_shape import ActorConfig, IdentityConfig, RuntimeConfig
+    from actor_config import MODEL_NAMES
 
     if registry.exists(name):
         return f"[Error] 角色 {name} 已存在"
@@ -350,7 +350,7 @@ async def _handle_create_character(arguments: dict) -> str:
             )
         provider = found_providers[0]
 
-    config = AgentConfig(
+    config = ActorConfig(
         identity=IdentityConfig(
             system_prompt=system_prompt,
             title=title,
@@ -390,7 +390,7 @@ def _handle_list_characters() -> str:
             model = config.runtime.model
             title = config.identity.title or "(未设置头衔)"
             traits = config.identity.traits or "(无描述)"
-            active = "(当前)" if name == _current_agent else ""
+            active = "(当前)" if name == _current_actor else ""
             lines.append(f"  {name}{active}: {title} | {prov}/{model} | {traits}")
         except Exception:
             lines.append(f"  {name}: (配置读取失败)")
@@ -419,7 +419,7 @@ async def _handle_send_to_character(arguments: dict) -> str:
 
     # 构建接收者的 context（引擎信息块 + 身份）
 
-    from agent_config import resolve_model as resolve_model_fn
+    from actor_config import resolve_model as resolve_model_fn
     try:
         recipient_provider_info, recipient_mc = resolve_model_fn(recipient_provider, recipient_model_short)
     except KeyError as e:
@@ -427,7 +427,7 @@ async def _handle_send_to_character(arguments: dict) -> str:
 
     # ── 2. 写入接收者历史（接收者视角：收到新消息） ──
     recipient_history = History(str(get_history_path(recipient))).load()
-    recipient_history.append_pair(f"[来自 {_current_agent} 的消息]\n{message}", "")
+    recipient_history.append_pair(f"[来自 {_current_actor} 的消息]\n{message}", "")
 
     # ── 同步接收者运行时配置到 model_config（之前遗漏：MC 裸建全是默认值）──
     from model_client.switch import sync_config_to_model
@@ -455,13 +455,13 @@ async def _handle_send_to_character(arguments: dict) -> str:
     from common.logger import logger as _logger
 
     _logger.info(
-        f"  [send_to_character] {_current_agent} → {recipient} | 引擎 {recipient_provider}/{recipient_model_short} | 历史 {len(all_msgs)} 条")
+        f"  [send_to_character] {_current_actor} → {recipient} | 引擎 {recipient_provider}/{recipient_model_short} | 历史 {len(all_msgs)} 条")
 
     from common.utils import set_display_name as _set_dn
 
-    _prev_agent = _current_agent
+    _prev_actor = _current_actor
     _set_dn(recipient)  # 终端显示名 → 接收者
-    set_agent(recipient)  # _current_agent → 接收者（update_runtime/update_identity 操作正确目标）
+    set_actor(recipient)  # _current_actor → 接收者（update_runtime/update_identity 操作正确目标）
 
     # ── 调用接收者 LLM，失败时自动尝试其他供应商 ──
     from model_client.model_context import MODEL_NAMES as _MN, list_providers as _list_prov
@@ -494,7 +494,7 @@ async def _handle_send_to_character(arguments: dict) -> str:
                 old_model = recipient_model_short
                 recipient_provider = available[0]
                 recipient_model_short = next(iter(_MN.get(recipient_provider, {}).keys()), "v4-flash")
-                from agent_config import resolve_model as _rm2
+                from actor_config import resolve_model as _rm2
                 try:
                     _, recipient_mc = _rm2(recipient_provider, recipient_model_short)
                 except KeyError as ke:
@@ -512,16 +512,15 @@ async def _handle_send_to_character(arguments: dict) -> str:
                 _logger.info(
                     f"  [send_to_character] 自动切换 {recipient} → {recipient_provider}/{recipient_model_short}")
     finally:
-        set_agent(_prev_agent)  # 恢复 _current_agent
-        _set_dn(_prev_agent)  # 恢复终端显示名
-
+        set_actor(_prev_actor)  # 恢复 _current_actor
+        _set_dn(_prev_actor)  # 恢复终端显示名
     if not reply.strip():
         reply = "(未生成回复)"
 
     # ── 5. 写入双方历史 ──
     # 发送者历史：完整记录发送+回复（不写空占位，避免异常残留）
-    if _current_agent != recipient:
-        sender_history = History(str(get_history_path(_current_agent))).load()
+    if _current_actor != recipient:
+        sender_history = History(str(get_history_path(_current_actor))).load()
         sender_history.append_pair(message, reply)
         sender_history.save()
 
@@ -802,7 +801,7 @@ def _ensure_tools():
     if not _tools_built:
         # 动态获取可用模型
         try:
-            import agent_config.model_resolver as mr
+            import actor_config.model_resolver as mr
             providers_desc = ", ".join(mr.MODEL_NAMES.keys())
             models_by_provider = []
             for p, ms in mr.MODEL_NAMES.items():

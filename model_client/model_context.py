@@ -5,11 +5,12 @@ from __future__ import annotations
 
 from collections import deque
 
-from agent_config import MODEL_NAMES
+from actor_config import MODEL_NAMES
 
 
 class ModelSwitched(Exception):
     """切换模型时抛出，携带 (provider, model) 供外层捕获并重建 client。"""
+
     def __init__(self, provider: str, model: str):
         self.provider = provider
         self.model = model
@@ -17,7 +18,6 @@ class ModelSwitched(Exception):
 
 
 from data_shape import ModelSwitch
-
 
 # ── 模型切换共享状态 ──
 
@@ -28,8 +28,9 @@ _actual_provider: str = ""
 _actual_model: str = ""
 
 # 供应商熔断器（per-provider，记录连续故障，达到阈值后切断）
-from .circuit_breaker import CircuitBreaker, is_exhausted_error
+from .circuit_breaker import CircuitBreaker
 from collections import defaultdict
+
 _circuit_breakers: dict[str, CircuitBreaker] = defaultdict(CircuitBreaker)
 
 
@@ -72,7 +73,7 @@ def is_provider_available(provider: str) -> bool:
 
 def get_circuit_status() -> dict:
     """获取所有供应商的熔断状态快照（LLM 友好格式）。"""
-    from agent_config import MODEL_NAMES
+    from actor_config import MODEL_NAMES
     result = {}
     for provider in set(list(MODEL_NAMES.keys()) + list(_circuit_breakers.keys())):
         cb = _circuit_breakers.get(provider)
@@ -106,15 +107,14 @@ def pop_switch() -> ModelSwitch | None:
 
 from data_shape import RoundMeta
 
-
 last_round: RoundMeta = RoundMeta()
 
 
 def set_round_meta(elapsed: float, usage: dict | None = None,
-                   finish_reason: str | None = None, error: str | None = None):
+        finish_reason: str | None = None, error: str | None = None):
     global last_round
     last_round = RoundMeta(api_time=elapsed, usage=usage,
-                           finish_reason=finish_reason, error=error)
+        finish_reason=finish_reason, error=error)
 
 
 # ── 累计用量 ──
@@ -188,7 +188,7 @@ def build_round_context() -> str:
     if len(provider_latency) > 1:
         lat_lines: list[str] = []
         for prov, q in sorted(provider_latency.items(),
-                                key=lambda x: sum(x[1]) / len(x[1]) if x[1] else 999):
+                key=lambda x: sum(x[1]) / len(x[1]) if x[1] else 999):
             if q:
                 avg = sum(q) / len(q)
                 lat_lines.append(f"{prov} {avg:.1f}s")

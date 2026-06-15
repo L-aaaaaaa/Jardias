@@ -1,5 +1,5 @@
 """
-agent_config.py — agent_config 模块数据形状（仅字段声明，零行为）。
+actor_config.py — actor_config 模块数据形状（仅字段声明，零行为）。
 """
 from dataclasses import dataclass, field
 from typing import Dict
@@ -26,14 +26,14 @@ class RuntimeConfig:
 class IdentityConfig:
     """身份定义。"""
     system_prompt: str = "智能体项目测试助手。"
-    title: str = ""   # 头衔，如"数据分析师"
+    title: str = ""  # 头衔，如"数据分析师"
     traits: str = ""  # 特质描述，如"擅长结构化报告"
     max_iterations: int = 10
     birth_time: str = ""
 
 
 @dataclass
-class AgentConfig:
+class ActorConfig:
     """一个角色的完整配置。"""
     identity: IdentityConfig = field(default_factory=IdentityConfig)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)

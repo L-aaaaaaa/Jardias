@@ -4,8 +4,8 @@ import mimetypes
 import os
 import re as _re_module
 
+from actor_config import MODEL_NAMES, get_model_capabilities
 from common.logger import logger
-from agent_config import MODEL_NAMES, get_model_capabilities
 
 _IMG_EXTS = r"\.(?:png|jpg|jpeg|webp|gif|bmp)"
 _IMG_EXT_END = r"(?:\?[^\s]*)?(?:\s|$)"
@@ -71,8 +71,8 @@ def auto_switch_for_vision(ctx, image_url: str) -> bool:
         logger.warning("No vision-capable model available")
         return False
 
-    from agent_config import save_config
-    from common.agent_log import model_switch as log_model_switch
+    from actor_config import save_config
+    from common.actor_log import model_switch as log_model_switch
 
     t_prov, t_model = target
     old_prov, old_model = ctx.config.runtime.provider, ctx.config.runtime.model

@@ -1,4 +1,4 @@
-"""Agent01 structured logging -- terminal + file output."""
+"""Actor01 structured logging -- terminal + file output."""
 from __future__ import annotations
 
 import logging as _stdlib_logging
@@ -33,7 +33,7 @@ def _config_sig(runtime) -> str:
 # ══════════════════════════════════════════════════════════════
 
 def turn_open(turn_num: int, provider: str, model_short: str, model_full: str,
-              runtime=None, tool_defs: list[dict] | None = None) -> None:
+        runtime=None, tool_defs: list[dict] | None = None) -> None:
     """轮次开始 — 不画分割线（print 已画），直接输出轮次 + 参数"""
     now = datetime.now().strftime("%H:%M:%S")
     logger.info(f"第 {turn_num} 轮 | {now} | {provider}/{model_short} -> {model_full}")
@@ -97,7 +97,7 @@ def max_rounds_reached(max_iter: int) -> None:
 # ══════════════════════════════════════════════════════════════
 
 def format_api_ok(elapsed: float, usage: dict | None = None,
-                  finish_reason: str | None = None) -> str:
+        finish_reason: str | None = None) -> str:
     """合并 API 耗时 + token 用量 + 截断警告为一行中文日志"""
     parts = [f"API OK · {elapsed:.1f}s"]
 
@@ -130,7 +130,7 @@ def format_api_ok(elapsed: float, usage: dict | None = None,
 # ══════════════════════════════════════════════════════════════
 
 def bootstrap_summary(history_msgs: int, provider: str, model: str, tool_count: int) -> None:
-    logger.info(f"Agent01 启动完成 -- 已加载 {history_msgs} 条历史记录，"
+    logger.info(f"Actor01 启动完成 -- 已加载 {history_msgs} 条历史记录，"
                 f"当前引擎 {provider}/{model}，可用工具 {tool_count} 个")
 
 

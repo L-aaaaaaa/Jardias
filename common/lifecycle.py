@@ -1,9 +1,9 @@
 """lifecycle — 对话循环：轮次执行、状态收集、历史持久化。"""
 import os
 
-from agent_config import load_config, MODEL_NAMES, resolve_model
+from actor_config import load_config, MODEL_NAMES, resolve_model
 from character.summarizer import check_and_compress
-from common.agent_log import turn_open, model_switch as log_model_switch
+from common.actor_log import turn_open, model_switch as log_model_switch
 from common.context import form_full_context
 from common.logger import logger
 from common.utils import set_display_name
@@ -139,7 +139,7 @@ async def _do_switch_character(ctx, name: str):
     """重新加载目标角色的所有上下文状态。"""
     from character import get_history_path
     from character.history import History
-    from tool.builtin import set_agent
+    from tool.builtin import set_actor
 
     old = ctx.character_name
 
@@ -148,7 +148,7 @@ async def _do_switch_character(ctx, name: str):
 
     # 2. 切角色名 + 重载配置
     ctx.character_name = name
-    set_agent(name)
+    set_actor(name)
     set_display_name(name)
     ctx.config = load_config(name, config_dir=ctx.config_dir)
 
@@ -267,7 +267,7 @@ async def conversation_loop(ctx, allow_switch: bool = False):
             if local_path:
                 image_url = local_image_to_data_url(local_path)
                 if image_url:
-                    from common.agent_log import local_image_loaded
+                    from common.actor_log import local_image_loaded
                     local_image_loaded(os.path.basename(local_path),
                         os.path.getsize(local_path) // 1024)
 

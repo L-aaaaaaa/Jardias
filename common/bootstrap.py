@@ -4,22 +4,20 @@ import os
 import sys
 from datetime import datetime
 
-from common.logger import logger
-from agent_config import (
-    AgentConfig,
+from actor_config import (
+    ActorConfig,
     init_config,
     load_config,
     save_config,
     resolve_model,
-    get_model_capabilities,
-    MODEL_NAMES,
 )
-from model_client.switch import resolve_chat, sync_config_to_model
-from model_client.common_client_util import form_client, single_completion
-from tool.builtin import set_agent, tools
 from character import get_history_path, ensure_dirs
 from character.history import History
-from common.agent_log import bootstrap_summary
+from common.actor_log import bootstrap_summary
+from common.logger import logger
+from model_client.common_client_util import single_completion
+from model_client.switch import resolve_chat, sync_config_to_model
+from tool.builtin import set_actor, tools
 
 
 def _default_system_prompt() -> str:
@@ -50,7 +48,7 @@ def bootstrap(provider: str, model: str, character_name: str = "default"):
         shutil.copy2(legacy_history, history_path)
         logger.info(f"  📁 历史迁移 | {legacy_history} → {history_path}")
 
-    set_agent(character_name)
+    set_actor(character_name)
 
     config_dir = os.path.join(base_dir, "config")
     try:
@@ -85,7 +83,7 @@ def bootstrap(provider: str, model: str, character_name: str = "default"):
 
     @dataclass
     class AppContext:
-        config: AgentConfig
+        config: ActorConfig
         provider: str
         model: str
         chat_fn: object
@@ -125,8 +123,7 @@ def _setup_llm_executor(ctx):
     """创建并注入 @llm_tool 旁路小模型执行器（支持跨 provider 模型路由）。"""
     from tool.llm_tool import set_llm_executor
     from model_client.common_client_util import form_client
-    from model_client.model_context import MODEL_NAMES
-    from agent_config.provider_manager import provider_manager
+    from actor_config.provider_manager import provider_manager
     from model_client.switch import _next_provider, _pick_fallback_model
     from data_shape import AIModelProvider
 
@@ -183,7 +180,8 @@ def _setup_llm_executor(ctx):
             # 修正常见 LLM JSON 错误
             import re
             text = re.sub(r',\s*([}\]])', r'\1', text)  # 行尾多余逗号
-            text = re.sub(r'(?<!\\)"([^"]*?)(?<!\\)"', lambda m: '"' + m.group(1).replace('"', '\\"') + '"', text)  # 未转义的内嵌引号（保守） 实际上这个正则太复杂，跳过
+            text = re.sub(r'(?<!\\)"([^"]*?)(?<!\\)"', lambda m: '"' + m.group(1).replace('"', '\\"') + '"',
+                text)  # 未转义的内嵌引号（保守） 实际上这个正则太复杂，跳过
             return text.strip()
 
         def _repair_json(text: str) -> str:
@@ -235,7 +233,7 @@ def _setup_llm_executor(ctx):
         for fb_model, fb_provider, fb_client, fb_api_model in fallback_chain:
             try:
                 raw_text = single_completion(fb_client, fb_api_model, messages,
-                                         temperature=0.0, max_tokens=4096)
+                    temperature=0.0, max_tokens=4096)
                 text = _extract_json(raw_text)
                 try:
                     result = json.loads(text)

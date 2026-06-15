@@ -4,8 +4,8 @@ character_menu.py — 终端交互式角色选择/创建菜单。
 """
 from __future__ import annotations
 
-from common.cli_style import separator_to_terminal
 from character.registry import registry
+from common.cli_style import separator_to_terminal
 
 
 def print_character_menu(character_list: list[str]) -> None:
@@ -94,8 +94,8 @@ def select_or_create_character() -> tuple[str, str, str] | None:
             else:
                 provider, model = "minimax", "2.7快"
 
-            from data_shape import AgentConfig, IdentityConfig, RuntimeConfig
-            config = AgentConfig(
+            from data_shape import ActorConfig, IdentityConfig, RuntimeConfig
+            config = ActorConfig(
                 identity=IdentityConfig(
                     system_prompt=system_prompt,
                     title=title,

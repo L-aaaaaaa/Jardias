@@ -3,10 +3,10 @@ registry.py — 角色注册表，管理所有角色生命周期。
 """
 from pathlib import Path
 
+from data_shape import ActorConfig
 from . import (
-    CHAR_ROOT, ensure_dirs, list_characters, get_config_path, get_character_dir,
+    ensure_dirs, list_characters, get_config_path, get_character_dir,
 )
-from data_shape import AgentConfig
 
 
 class CharacterRegistry:
@@ -16,12 +16,12 @@ class CharacterRegistry:
     def exists(self, name: str) -> bool:
         return name in self.scan()
 
-    def create(self, name: str, config: AgentConfig):
+    def create(self, name: str, config: ActorConfig):
         if self.exists(name):
             raise ValueError(f"角色 {name} 已存在")
         ensure_dirs(name)
         path = get_config_path(name)
-        from agent_config.config_io import config_to_dict, save_config
+        from actor_config.config_io import save_config
         save_config(config, name)
 
     def delete(self, name: str):
@@ -32,8 +32,8 @@ class CharacterRegistry:
         if dir_path.exists():
             shutil.rmtree(dir_path)
 
-    def get_config(self, name: str) -> AgentConfig:
-        from agent_config.config_io import config_from_dict
+    def get_config(self, name: str) -> ActorConfig:
+        from actor_config.config_io import config_from_dict
         import json
         path = get_config_path(name)
         if not path.exists():

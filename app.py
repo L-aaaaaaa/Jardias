@@ -1,8 +1,8 @@
-"""Agent01 — AI Agent 框架入口。"""
+"""actor01 — AI actor 框架入口。"""
 import asyncio
-import sys
 import os
 import signal
+import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -22,7 +22,7 @@ async def main(provider: str = "minimax", model: str = "2.7快", character: str 
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Agent01 — AI Agent 框架")
+    parser = argparse.ArgumentParser(description="actor01 — AI actor 框架")
     parser.add_argument("--provider", default="minimax", help="LLM 供应商 (minimax/dashscope/deepseek)")
     parser.add_argument("--model", default="2.7快", help="模型短名")
     parser.add_argument("--character", default=None, help="启动时使用的角色（不指定则进入交互菜单）")
@@ -31,6 +31,7 @@ if __name__ == "__main__":
 
     if args.list:
         from character.registry import registry
+
         chars = registry.scan()
         if not chars:
             print("暂无角色。")

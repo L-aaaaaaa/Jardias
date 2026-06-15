@@ -1,10 +1,10 @@
-"""context — 上下文构建：将 AgentConfig + History → LLM 可消费的 messages。"""
+"""context — 上下文构建：将 ActorConfig + History → LLM 可消费的 messages。"""
 import re as _re_module
 from datetime import datetime
 
-from agent_config import MODEL_NAMES, get_model_capabilities
-from tool.builtin import tools
+from actor_config import MODEL_NAMES, get_model_capabilities
 from character.summarizer import build_l1_context
+from tool.builtin import tools
 
 
 def _build_character_context() -> str:
@@ -153,7 +153,7 @@ def _build_recent_history(history: list[dict], keep_turns: int = 6) -> str:
 
 
 def build_system_message(config, character_name: str = "default",
-                         switch_note: str = None) -> dict:
+        switch_note: str = None) -> dict:
     """构建合并后的单条 system 消息（身份 + 引擎信息）。MiniMax 不接受连续双 system。"""
     identity_block = config.identity.system_prompt.strip()
     birth_note = ""
