@@ -4,8 +4,13 @@ import inspect as _inspect
 import pathlib
 import re
 
-from common.logger import logger
 from data_shape import ToolDef
+
+
+def _log():
+    """延迟导入 logger，避免 tool.builtin <-> common 循环依赖。"""
+    from common.logger import logger
+    return logger
 
 # ── 工具执行调度表（延迟赋值，避免循环导入）──
 _BUILTIN_HANDLERS: dict[str, callable] = {}
@@ -291,13 +296,14 @@ async def _handle_summarize_conversation(arguments: dict) -> str:
 
     saved_path = save_l1(_current_actor, summary)
 
+    from character.summarizer import l1summary_to_context_string
     lines = [
-        f"[摘要已保存] {summary.to_context_string()}",
+        f"[摘要已保存] {l1summary_to_context_string(summary)}",
         f"  详情: {detail}",
         f"  截断位置: {cutoff_time} — 保留最近 {keep_recent_turns} 轮原文",
         f"  文件: {saved_path}",
     ]
-    logger.info(f"  📦 角色主动摘要 | {user_turns} 轮 → {topic} | {saved_path}")
+    _log().info(f"  📦 角色主动摘要 | {user_turns} 轮 → {topic} | {saved_path}")
     return "\n".join(lines)
 
 

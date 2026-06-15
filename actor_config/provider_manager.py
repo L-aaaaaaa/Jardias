@@ -6,9 +6,7 @@ from pathlib import Path
 from typing import Dict, Optional, Any
 
 import json5
-from watchfiles import watch
 
-from common.logger import logger
 from data_shape import ModelEntry, ProviderConfig, ConfigFile
 
 _DEFAULT_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "providers.json5")
@@ -155,6 +153,10 @@ class ProviderManager:
 
         self._hot_reload_running = True
         self._on_reload = on_reload
+
+        # 延迟导入，避免循环依赖
+        from watchfiles import watch
+        from common.logger import logger
 
         def monitor():
             # 只监听配置文件本身的变化，且不递归

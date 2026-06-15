@@ -10,7 +10,7 @@ data_shape — 数据形状层
   model_client.py   — AIModelConfig / AIModelProvider / ToolCall / RoundOutput / ChatResult / RoundMeta / ModelSwitch
   tool.py           — ToolDef / ToolParam
 """
-from actor_config import ActorConfig, IdentityConfig, RuntimeConfig, ModelEntry, ProviderConfig, ConfigFile
+from .agent_config import ActorConfig, IdentityConfig, RuntimeConfig, ModelEntry, ProviderConfig, ConfigFile
 from .character import L1Summary
 from .model_client import AIModelConfig, AIModelProvider, ToolCall, RoundOutput, ChatResult, RoundMeta, ModelSwitch
 from .tool import ToolDef, ToolParam

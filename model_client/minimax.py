@@ -1,6 +1,5 @@
 """MiniMax 供应商 (OpenAI-compatible)"""
 from common.logger import logger
-from tool.builtin import tools
 from .common_client_util import (
     AIModelConfig,
     reason_action_loop,
@@ -13,6 +12,7 @@ async def reason_action_chat(messages: list[dict], model_config=None,
     if model_config is None:
         model_config = AIModelConfig()
     logger.info(f"供应商 minimax | 模型={model_config.model} | 地址={model_config.base_url}")
+    from tool.builtin import tools  # 延迟导入，避免循环依赖
     tool_defs = tools.get_definitions()
     if tool_defs:
         model_config.tools = tool_defs
