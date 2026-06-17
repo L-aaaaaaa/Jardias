@@ -45,6 +45,25 @@ def _caps_summary(caps: set[str]) -> str:
     return ", ".join(labels[c] for c in sorted(caps) if c in labels)
 
 
+def _build_shice_guide() -> str:
+    """如果 shice 工具可用，注入使用说明。"""
+    from tool.builtin import tools
+    names = tools.list_names()
+    if "shice_schedule_add" not in names:
+        return ""
+    return (
+        "### 时策（定时任务）\n"
+        "规则：\n"
+        "1. shice_schedule_add 一次传入所有时间戳，绝不拆成多次调用。\n"
+        "2. 触发时收到的「时策任务到期」消息，直接执行任务内容（说单词就说单词），不要分析延迟、不要查状态、不要调其他工具。\n"
+        "3. 只有收到批量触发（「共 N 个任务到期」）时才用 shice_schedule_list 查状态，判断是否需要重调度。不要用 write_file 记录状态。\n"
+        "4. 任务描述（message）写清楚要做什么，如「说一个随机单词」「提醒用户喝水」。不要只写一个词。\n"
+        "工具：shice_schedule_add 注册、shice_schedule_list 查看、shice_schedule_cancel 取消。\n"
+        "若需调整间隔或修改已注册任务，用 cancel 取消旧任务 + add 重新注册新任务。\n"
+        "示例场景：「如果累计错过3次，剩下的改为间隔10秒」→ 先全部注册，触发时批量检测错过次数，达到条件就 cancel 剩余任务 + add 重新以10秒间隔注册。\n\n"
+    )
+
+
 def build_config_context(config) -> str:
     """注入运行时引擎信息。"""
     rt = config.runtime
@@ -95,6 +114,7 @@ def build_config_context(config) -> str:
 ### 工具
 {tool_names}
 
+{_build_shice_guide()}
 图片策略: 收到图片但当前引擎无 vision → 通过 update_runtime 切到有 vision 的引擎。
 
 ### 思考语言（重要）
@@ -152,10 +172,7 @@ def _build_recent_history(history: list[dict], keep_turns: int = 6) -> str:
         content = msg.get("content", "")
         # 清理 assistant 消息中残留的推理文本
         if role == "assistant":
-            # 去掉 [思考] 头到实际回复之间的推理文本
             content = _re_module.sub(r'\[思考\]\n', '', content)
-            content = _re_module.sub(r'\n.+?\n(?=[^\[<])', '\n', content)
-            # 去掉 <think>...</think>
             content = _re_module.sub(r'<think>.*?</think>', '', content, flags=_re_module.DOTALL)
             content = content.strip()
         fence = "```"
