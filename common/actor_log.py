@@ -54,7 +54,7 @@ def turn_open(turn_num: int, provider: str, ipu_short: str, ipu_full: str,
 
 
 def turn_input(text: str):
-    logger.info(f"  用户输入: {text}")
+    logger.info(f"  【用户输入】：{text}")
 
 
 # ══════════════════════════════════════════════════════════════

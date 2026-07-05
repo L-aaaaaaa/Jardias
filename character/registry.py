@@ -1,11 +1,12 @@
 """
 registry.py — 角色注册表，管理所有角色生命周期。
 """
+import json
 from pathlib import Path
 
 from data_shape import ActorConfig
 from . import (
-    ensure_dirs, list_characters, get_config_path, get_character_dir,
+    ensure_dirs, list_characters, get_config_path, get_character_dir, get_history_path,
 )
 
 
@@ -17,12 +18,19 @@ class CharacterRegistry:
         return name in self.scan()
 
     def create(self, name: str, config: ActorConfig):
+        """创建角色并立即持久化所有文件骨架。
+
+        之前只有 config.json 落盘，history.json 要等首次对话才创建，
+        context_latest.md 要等首次 LLM 调用才写入。
+        现在 create 后目录里所有文件全部可见。
+        """
         if self.exists(name):
             raise ValueError(f"角色 {name} 已存在")
         ensure_dirs(name)
         path = get_config_path(name)
         from character.config_io import save_config
         save_config(config, name)
+        _ensure_skeleton_files(name)
 
     def delete(self, name: str):
         if name == "default":
@@ -43,6 +51,25 @@ class CharacterRegistry:
 
     def get_context_latest_path(self, name: str) -> Path:
         return get_character_dir(name) / "context_latest.md"
+
+
+def _ensure_skeleton_files(name: str) -> None:
+    """创建角色的空文件骨架，让「角色文档」创建后立即在磁盘上完整可见。
+
+    - history.json      → JSON 数组 []（下游 json.load 直接可用）
+    - context_latest.md → 占位说明
+    - summaries/L1/     → 由 ensure_dirs 已创建
+    """
+    char_dir = get_character_dir(name)
+    history_path = char_dir / "history.json"
+    if not history_path.exists():
+        history_path.write_text("[]", encoding="utf-8")
+    context_md = char_dir / "context_latest.md"
+    if not context_md.exists():
+        context_md.write_text(
+            f"<!-- 角色 {name} 的最新上下文将在首次对话后写入 -->\n",
+            encoding="utf-8",
+        )
 
 
 registry = CharacterRegistry()

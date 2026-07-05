@@ -296,6 +296,8 @@ async def conversation_loop(ctx, allow_switch: bool = False):
 
             t_now = _dt.now().strftime("%H:%M:%S")
             print(f"\n（发送时间：{t_now}）")
+            from common.actor_log import turn_input
+            turn_input(user_input)
 
             if not user_input.strip():
                 continue
