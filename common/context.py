@@ -1,10 +1,10 @@
-"""context — 上下文构建：将 ActorConfig + History → LLM 可消费的 messages。"""
+"""context — 上下文构建：将 ActorConfig + History → IPU 可消费的 messages。"""
 import re as _re_module
 from datetime import datetime
 
-from actor_config import MODEL_NAMES, get_model_capabilities
 from character.summarizer import build_l1_context
 from tool.builtin import tools
+from yinao import IPU_REGISTRY, get_ipu_capabilities
 
 
 def _build_character_context() -> str:
@@ -17,17 +17,17 @@ def _build_character_context() -> str:
         try:
             config = registry.get_config(name)
             title = config.identity.title or name
-            model = config.runtime.model
-            lines.append(f"  {name}: {title} ({model})")
+            ipu = config.runtime.ipu
+            lines.append(f"  {name}: {title} ({ipu})")
         except Exception:
             lines.append(f"  {name}")
     lines.append("使用 send_to_character 向其他角色发送消息。")
     return "\n".join(lines)
 
 
-def _get_full_model_name(provider: str, short_name: str) -> str:
+def _get_full_ipu_name(provider: str, short_name: str) -> str:
     try:
-        return MODEL_NAMES[provider][short_name]
+        return IPU_REGISTRY[provider][short_name]
     except KeyError:
         return short_name
 
@@ -46,7 +46,6 @@ def _caps_summary(caps: set[str]) -> str:
 
 
 def _build_shice_guide() -> str:
-    """如果 shice 工具可用，注入使用说明。"""
     from tool.builtin import tools
     names = tools.list_names()
     if "shice_schedule_add" not in names:
@@ -65,24 +64,23 @@ def _build_shice_guide() -> str:
 
 
 def build_config_context(config) -> str:
-    """注入运行时引擎信息。"""
+    """注入运行时引擎信息（IPU + ICP 视角）。"""
     rt = config.runtime
-    full_name = _get_full_model_name(rt.provider, rt.model)
-    my_caps = _caps_summary(get_model_capabilities(rt.provider, rt.model))
+    full_name = _get_full_ipu_name(rt.provider, rt.ipu)
+    my_caps = _caps_summary(get_ipu_capabilities(rt.provider, rt.ipu))
 
-    models_lines = []
-    for provider, models in MODEL_NAMES.items():
+    ipu_lines = []
+    for provider, ipus in IPU_REGISTRY.items():
         entries = []
-        for short, full in models.items():
-            caps = _caps_summary(get_model_capabilities(provider, short))
+        for short, full in ipus.items():
+            caps = _caps_summary(get_ipu_capabilities(provider, short))
             entries.append(f"{short}({full}) [{caps}]")
-        models_lines.append(f"  {provider}: {', '.join(entries)}")
+        ipu_lines.append(f"  {provider}: {', '.join(entries)}")
 
     tool_names = ", ".join(
         tools.get_definitions() and [t["function"]["name"] for t in tools.get_definitions()] or []
     )
 
-    # ── 运行环境信息 ──
     import platform as _platform, os as _os
     _cwd = _os.getcwd()
     _env_block = f"""## 运行环境
@@ -100,16 +98,16 @@ def build_config_context(config) -> str:
     return f"""## 引擎
 
 ### 当前配置
-- 模型: **{full_name}** (provider={rt.provider})
+- 智能基元: **{full_name}** (provider={rt.provider})
 - 能力: {my_caps}
-- 参数: temperature={rt.temperature}, top_p={rt.top_p}, max_tokens={rt.max_tokens}{thinking_note}
+- 参数: temperature={rt.temperature}, top_p={rt.top_p}, max_icp={rt.max_icp}{thinking_note}
 - 思考: mode={rt.thinking_mode}, effort={rt.reasoning_effort}, enabled={'Yes' if rt.thinking_enabled else 'No'}
 
 引擎是你的计算底座，不是你身份。引擎可以切换，身份是稳定的；不要把引擎型号当成自己的名字。
-当被问到「你是谁」→ 依据 `# 身份` 回答。当被问到「你用什么模型」→ 依据本节回答。
+当被问到「你是谁」→ 依据 `# 身份` 回答。当被问到「你用什么智能基元」→ 依据本节回答。
 
-### 可切换模型
-{chr(10).join(models_lines)}
+### 可切换智能基元
+{chr(10).join(ipu_lines)}
 
 ### 工具
 {tool_names}
@@ -129,18 +127,8 @@ def build_config_context(config) -> str:
 
 
 def strip_context_wrapper(message: str) -> str:
-    """剥离 form_full_context 用户消息的结构化外壳。
-
-    form_full_context 在每条用户消息外加了：
-      ## 本次用户消息\n\n### [ts] user:\n\n```text\n{content}\n```
-
-    当 LLM 调用 send_to_character 时可能将整块格式当作消息正文传入，
-    导致嵌套。此函数逆向提取原始消息正文。
-    """
     if not message:
         return message
-
-    # 模式：## 本次用户消息 开头，含 时间戳行（支持 t_sent 后缀）和 text 代码围栏
     pattern = (
         r'^##\s*本次用户消息\s*'
         r'\n+###\s*\[[^\]]+\]\s*user(?:\s*\(t_sent=\d+ms\))?:\s*'
@@ -155,7 +143,6 @@ def strip_context_wrapper(message: str) -> str:
 
 
 def _build_recent_history(history: list[dict], keep_turns: int = 6) -> str:
-    """将最近 N 轮对话格式化为文本块。"""
     if not history:
         return "## 近期对话原文\n\n（暂无对话记录）"
 
@@ -165,12 +152,10 @@ def _build_recent_history(history: list[dict], keep_turns: int = 6) -> str:
         role = msg.get("role", "unknown")
         t = msg.get("time", "")
         if role == "system_trigger":
-            # 时策触发：不编码为对话，而是作为注入提示
             header = f"[时策触发 {t}]"
         else:
             header = f"[{t}] {role}:" if t else f"{role}:"
         content = msg.get("content", "")
-        # 清理 assistant 消息中残留的推理文本
         if role == "assistant":
             content = _re_module.sub(r'\[思考\]\n', '', content)
             content = _re_module.sub(r'<think>.*?</think>', '', content, flags=_re_module.DOTALL)
@@ -213,22 +198,14 @@ def build_system_message(config, character_name: str = "default",
 def form_full_context(config, history: list[dict], user_input: str,
         image_url: str = None, switch_note: str = None,
         round_context: str = "", character_name: str = "default") -> list[dict]:
-    """固定 3 消息 + 用户输入 = 消息数 O(1)。
-
-    messages[0] = system   → # 系统提示词 (身份 + 引擎)
-    messages[1] = user     → # 状态 (上轮 token 等)
-    messages[2] = user     → # 历史 (# 摘要 + # 近期对话原文)
-    messages[3] = user     → 本次用户消息
-    """
+    """固定 3 消息 + 用户输入 = 消息数 O(1)。"""
     result: list[dict] = [build_system_message(config, character_name, switch_note)]
 
-    # messages[1]: 状态
     if round_context:
         result.append({"role": "user", "content": round_context})
     else:
         result.append({"role": "user", "content": "# 状态\n\n（首轮对话，暂无消耗数据）"})
 
-    # messages[2]: 历史
     l1_block = build_l1_context(character_name)
     recent_block = (
         _build_recent_history(history)
@@ -241,7 +218,6 @@ def form_full_context(config, history: list[dict], user_input: str,
     history_parts.append(recent_block)
     result.append({"role": "user", "content": f"# 历史\n\n" + "\n\n".join(history_parts)})
 
-    # messages[3]: 本次用户消息
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     t_sent_ms = int(datetime.now().timestamp() * 1000)
     if image_url:

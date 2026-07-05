@@ -1,4 +1,4 @@
-"""
+﻿"""
 character_menu.py — 终端交互式角色选择/创建菜单。
 基于 Jarvis0 的 character_menu.py 适配。
 """
@@ -21,8 +21,8 @@ def print_character_menu(character_list: list[str]) -> None:
                 title = config.identity.title or "(未设置)"
                 traits = config.identity.traits or "(无描述)"
                 prov = config.runtime.provider
-                model = config.runtime.model
-                print(f"  [{i + 1}] {name} — {title} ({prov}/{model})")
+                ipu = config.runtime.ipu
+                print(f"  [{i + 1}] {name} — {title} ({prov}/{ipu})")
                 if traits != "(无描述)":
                     print(f"      {traits}")
             except Exception:
@@ -38,14 +38,14 @@ def print_character_menu(character_list: list[str]) -> None:
 
 def _build_engine_menu() -> tuple[list[str], dict[int, tuple[str, str]]]:
     """
-    从 MODEL_NAMES 动态构建引擎选择菜单。
+    \u4ece IPU_REGISTRY \u52a8\u6001\u6784\u5efa\u667a\u80fd\u57fa\u5143\u9009\u62e9\u83dc\u5355\u3002
     返回 (显示行列表, {序号: (provider, model_short)})。
     """
-    from actor_config.model_resolver import MODEL_NAMES
+    from yinao.ipu_resolver import IPU_REGISTRY
     display_lines: list[str] = []
     idx_map: dict[int, tuple[str, str]] = {}
     i = 1
-    for prov_name, models in MODEL_NAMES.items():
+    for prov_name, models in IPU_REGISTRY.items():
         for short_name, full_name in models.items():
             display_lines.append(f"{prov_name} / {short_name} ({full_name})")
             idx_map[i] = (prov_name, short_name)
@@ -55,7 +55,7 @@ def _build_engine_menu() -> tuple[list[str], dict[int, tuple[str, str]]]:
 
 def select_or_create_character() -> tuple[str, str, str] | None:
     """
-    显示角色选择菜单，返回 (角色名, provider, model) 或 None（退出）。
+    显示角色选择菜单，返回 (角色名, provider, ipu) 或 None（退出）。
 
     返回的是角色显示名，直接传给 bootstrap()。
     """
@@ -107,31 +107,31 @@ def select_or_create_character() -> tuple[str, str, str] | None:
             if engine_choice.isdigit():
                 idx = int(engine_choice)
                 if 1 <= idx <= len(engine_display):
-                    provider, model = engine_map[idx]
+                    provider, ipu = engine_map[idx]
                 elif idx == custom_idx:
                     provider = input("Provider: ").strip()
-                    model = input("Model: ").strip()
+                    ipu = input("IPU 短名: ").strip()
                 else:
                     print("无效选择，使用默认引擎")
-                    provider, model = "minimax", "2.7快"
+                    provider, ipu = "minimax", "2.7快"
             else:
-                provider, model = "minimax", "2.7快"
+                provider, ipu = "minimax", "2.7快"
 
-            from data_shape import ActorConfig, IdentityConfig, RuntimeConfig
+            from data_shape import ActorConfig, RoleConfig, IPURuntime
             config = ActorConfig(
-                identity=IdentityConfig(
+                identity=RoleConfig(
                     system_prompt=system_prompt,
                     title=title,
                     traits=traits,
                 ),
-                runtime=RuntimeConfig(
+                runtime=IPURuntime(
                     provider=provider,
-                    model=model,
+                    ipu=ipu,
                 ),
             )
             registry.create(name, config)
-            print(f"\n角色已创建: {name} ({provider}/{model})")
-            return (name, provider, model)
+            print(f"\n角色已创建: {name} ({provider}/{ipu})")
+            return (name, provider, ipu)
 
         if choice.isdigit():
             idx = int(choice) - 1
@@ -140,10 +140,10 @@ def select_or_create_character() -> tuple[str, str, str] | None:
                 try:
                     config = registry.get_config(name)
                     provider = config.runtime.provider
-                    model = config.runtime.model
+                    ipu = config.runtime.ipu
                 except Exception:
-                    provider, model = "minimax", "2.7快"
-                return (name, provider, model)
+                    provider, ipu = "minimax", "2.7快"
+                return (name, provider, ipu)
             print(f"无效选择，有效范围 1-{len(character_list)}")
         else:
             print("无效输入")

@@ -15,7 +15,7 @@ from . import get_summaries_dir
 # ── 旁路小模型：对话摘要 ──
 
 @llm_tool(
-    model="v4-flash",
+    ipu="v4-flash",
     output_schema={
         "segments": "array of {from: int, to: int, topic: string, detail: string}"
     },
@@ -29,7 +29,7 @@ from . import get_summaries_dir
             "## 每段的 detail 必须包含\n"
             "- 做了什么 → 用了什么方法 → 得到了什么结论\n"
             "- 如果有具体数值（通过率、参数值、错误类型），写进去\n"
-            "- 如果有命名实体（角色名、模型名、文件名），写进去\n"
+            "- 如果有命名实体（角色名、智能基元简称、文件名），写进去\n"
             "- 禁止「进行了测试」「讨论了配置」这类空泛说法\n\n"
             "## 正确 vs 错误示例\n"
             "✅「创建角色小高配合完成 15 个工具测试，通过率 93.3%（14/15），仅 web_search 超时未通过」\n"
@@ -132,8 +132,8 @@ def _analyze_slice(messages: list[dict]) -> tuple[int, str, str, list[str]]:
             user_topics.add("身份探索")
         if "切换" in c:
             user_topics.add("引擎切换")
-        if "token" in c.lower() or "消耗" in c:
-            user_topics.add("token 感知")
+        if "智点" in c or "ICP" in c.upper() or "token" in c.lower() or "消耗" in c:
+            user_topics.add("智点感知")
         if "日志" in c or "log" in c.lower():
             user_topics.add("日志调试")
         if "图片" in c or "image" in c.lower() or "img" in c.lower():
@@ -162,7 +162,7 @@ def _describe_slice(user_turns: int, events: list[str], topic: str) -> str:
     if topic != "基础对话测试":
         parts.append(f"涉及: {topic}")
     if any(e in events for e in ["引擎切换"]):
-        parts.append("期间进行了模型切换测试")
+        parts.append("期间进行了智能基元切换测试")
     if any(e in events for e in ["身份探索"]):
         parts.append("反复验证身份定义与引擎感知")
     return "，".join(parts[:3]) + "。"

@@ -1,14 +1,12 @@
-﻿"""
+"""
 test_imports.py — 模块导入完整性检测
 
 验证所有模块可以独立导入，无循环依赖或缺失符号。
-这是 Phase 1 "确认基础可运行" 的第一道门槛。
+模块路径已按命名重构后的真实结构更新。
 """
-import sys
 import os
-import traceback
+import sys
 
-# 确保项目根目录在 sys.path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
@@ -18,17 +16,25 @@ def test_all_imports():
     modules = [
         # 入口
         "app",
-        # 配置层
-        "actor_config",
-        "actor_config.config_io",
-        "actor_config.model_resolver",
-        "actor_config.provider_manager",
+        # 配置层（义脑）
+        "yinao",
+        "yinao.ipu_resolver",
+        "yinao.provider_manager",
+        "yinao.ipu_client",
+        "yinao.ipu_client.switch",
+        "yinao.ipu_client.ipu_context",
+        "yinao.ipu_client.common_client_util",
+        "yinao.ipu_client.circuit_breaker",
+        "yinao.ipu_client.minimax",
+        "yinao.ipu_client.dashscope",
+        "yinao.ipu_client.deepseek",
         # 角色管理
         "character",
         "character.history",
         "character.registry",
         "character.character_menu",
         "character.summarizer",
+        "character.config_io",
         # 公共模块
         "common",
         "common.context",
@@ -40,26 +46,25 @@ def test_all_imports():
         "common.cli_style",
         # 数据形状
         "data_shape",
-        "data_shape.agent_config",
+        "data_shape.yinao_config",
+        "data_shape.ipu",
+        "data_shape.ipu_client",
         "data_shape.character",
-        "data_shape.model_client",
         "data_shape.tool",
         # 媒体
         "media",
         "media.image",
-        # 模型客户端
-        "model_client",
-        "model_client.common_client_util",
-        "model_client.circuit_breaker",
-        "model_client.switch",
-        "model_client.model_context",
-        "model_client.deepseek",
-        "model_client.dashscope",
-        "model_client.minimax",
         # 工具
         "tool",
         "tool.llm_tool",
         "tool.builtin",
+        # 时策
+        "schedule",
+        "schedule.types",
+        "schedule.repository",
+        "schedule.shice",
+        "schedule.strategies",
+        "schedule.concurrency",
     ]
 
     passed = 0
@@ -72,9 +77,9 @@ def test_all_imports():
         except Exception as e:
             failed.append((m, str(e)))
 
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"  模块导入检测: {passed}/{len(modules)} OK")
-    print(f"{'='*50}")
+    print(f"{'=' * 50}")
 
     if failed:
         print("\n[FAIL] 以下模块导入失败:")
@@ -87,20 +92,23 @@ def test_all_imports():
 
 
 def test_data_shape_exports():
-    """验证 data_shape 统一出口导出了所有关键类型。"""
+    """验证 data_shape 统一出口导出了所有关键类型（按 IPU/ICP 新术语）。"""
     from data_shape import (
-        ActorConfig, IdentityConfig, RuntimeConfig,
-        ModelEntry, ProviderConfig, ConfigFile,
-        L1Summary,
-        AIModelConfig, AIModelProvider, ToolCall,
-        RoundOutput, ChatResult, RoundMeta, ModelSwitch,
-        ToolDef, ToolParam,
+        ActorConfig, RoleConfig, IPURuntime,
+        IPUEntry, IPUProviderConfig, IPUConfigFile,
+        IPUConfig, IPUProvider, IPUSwitch,
+        L1Summary, ToolDef,
     )
     print(f"  ActorConfig       = {ActorConfig}")
-    print(f"  IdentityConfig    = {IdentityConfig}")
-    print(f"  RuntimeConfig     = {RuntimeConfig}")
+    print(f"  RoleConfig        = {RoleConfig}")
+    print(f"  IPURuntime        = {IPURuntime}")
+    print(f"  IPUEntry          = {IPUEntry}")
+    print(f"  IPUProviderConfig = {IPUProviderConfig}")
+    print(f"  IPUConfigFile     = {IPUConfigFile}")
+    print(f"  IPUConfig         = {IPUConfig}")
+    print(f"  IPUProvider       = {IPUProvider}")
+    print(f"  IPUSwitch         = {IPUSwitch}")
     print(f"  L1Summary         = {L1Summary}")
-    print(f"  AIModelConfig     = {AIModelConfig}")
     print(f"  ToolDef           = {ToolDef}")
     print("[OK] data_shape 统一出口所有类型正常")
 
@@ -110,4 +118,3 @@ if __name__ == "__main__":
     if ok:
         test_data_shape_exports()
     sys.exit(0 if ok else 1)
-

@@ -9,7 +9,7 @@ import os
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
-from data_shape import ActorConfig, IdentityConfig, RuntimeConfig
+from data_shape import ActorConfig, RoleConfig, IPURuntime
 from common.context import (
     form_full_context,
     build_system_message,
@@ -21,16 +21,16 @@ from common.context import (
 
 def make_test_config():
     return ActorConfig(
-        identity=IdentityConfig(
+        identity=RoleConfig(
             system_prompt="测试用系统提示词。",
             title="测试角色",
             traits="测试特质",
         ),
-        runtime=RuntimeConfig(
+        runtime=IPURuntime(
             provider="minimax",
-            model="2.7快",
+            ipu="2.7快",
             temperature=1.0,
-            max_tokens=4096,
+            max_icp=4096,
         ),
     )
 

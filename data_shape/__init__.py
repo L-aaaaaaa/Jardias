@@ -5,12 +5,16 @@ data_shape — 数据形状层
 每个根目录模块对应一个文件，__init__.py 统一出口。
 
 目录:
-  actor_config.py   — ModelEntry / ProviderConfig / ConfigFile
-  character.py      — L1Summary
-  model_client.py   — AIModelConfig / AIModelProvider / ToolCall / RoundOutput / ChatResult / RoundMeta / ModelSwitch
-  tool.py           — ToolDef / ToolParam
+  yinao_config.py  — ActorConfig / RoleConfig / IPURuntime
+  ipu.py           — IPUEntry / IPUProviderConfig / IPUConfigFile
+  ipu_client.py    — IPUConfig / IPUProvider / ToolCall / RoundOutput / ChatResult / RoundMeta / IPUSwitch
+  character.py     — L1Summary
+  tool.py          — ToolDef / ToolParam
 """
-from .agent_config import ActorConfig, IdentityConfig, RuntimeConfig, ModelEntry, ProviderConfig, ConfigFile
+from .yinao_config import ActorConfig, RoleConfig, IPURuntime
+from .ipu import IPUEntry, IPUProviderConfig, IPUConfigFile
+from .ipu_client import (
+    IPUConfig, IPUProvider, ToolCall, RoundOutput, ChatResult, RoundMeta, IPUSwitch,
+)
 from .character import L1Summary
-from .model_client import AIModelConfig, AIModelProvider, ToolCall, RoundOutput, ChatResult, RoundMeta, ModelSwitch
 from .tool import ToolDef, ToolParam

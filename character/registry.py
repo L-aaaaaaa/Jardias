@@ -21,7 +21,7 @@ class CharacterRegistry:
             raise ValueError(f"角色 {name} 已存在")
         ensure_dirs(name)
         path = get_config_path(name)
-        from actor_config.config_io import save_config
+        from character.config_io import save_config
         save_config(config, name)
 
     def delete(self, name: str):
@@ -33,7 +33,7 @@ class CharacterRegistry:
             shutil.rmtree(dir_path)
 
     def get_config(self, name: str) -> ActorConfig:
-        from actor_config.config_io import config_from_dict
+        from character.config_io import config_from_dict
         import json
         path = get_config_path(name)
         if not path.exists():

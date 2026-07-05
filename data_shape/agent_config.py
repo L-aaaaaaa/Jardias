@@ -1,58 +1,22 @@
 """
-actor_config.py — actor_config 模块数据形状（仅字段声明，零行为）。
+agent_config.py — 已弃用（DEPRECATED）的旧兼容 shim。
+
+本模块的内容已迁移至：
+  - data_shape.yinao_config : ActorConfig / RoleConfig / IPURuntime
+  - data_shape.ipu          : IPUEntry / IPUProviderConfig / IPUConfigFile
+
+本文件仅保留为重导出 shim 以避免破坏既有 import 路径，
+新代码请直接 import data_shape.* 或 data_shape.yinao_config.* / data_shape.ipu.*。
+本文件将在后续清理阶段删除。
 """
-from dataclasses import dataclass, field
-from typing import Dict
+from .yinao_config import ActorConfig, RoleConfig, IPURuntime
+from .ipu import IPUEntry, IPUProviderConfig, IPUConfigFile
 
-from pydantic import BaseModel, Field
-
-
-# ── 角色配置三层结构 ──
-
-@dataclass
-class RuntimeConfig:
-    """智能体可以自由调整的运行时参数。"""
-    provider: str = "minimax"
-    model: str = "2.7"
-    temperature: float = 1.0
-    top_p: float = 0.95
-    max_tokens: int = 8192
-    thinking_mode: str = "auto"
-    reasoning_effort: str = "high"
-    thinking_enabled: bool = True
-
-
-@dataclass
-class IdentityConfig:
-    """身份定义。"""
-    system_prompt: str = "智能体项目测试助手。"
-    title: str = ""  # 头衔，如"数据分析师"
-    traits: str = ""  # 特质描述，如"擅长结构化报告"
-    max_iterations: int = 10
-    birth_time: str = ""
-
-
-@dataclass
-class ActorConfig:
-    """一个角色的完整配置。"""
-    identity: IdentityConfig = field(default_factory=IdentityConfig)
-    runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
-
-
-# ── Provider JSON5 配置 ──
-
-class ModelEntry(BaseModel):
-    id: str
-    caps: list[str] = Field(default_factory=list)
-
-
-class ProviderConfig(BaseModel):
-    name: str
-    api_key_env: str
-    base_url: str
-    models: Dict[str, dict] = Field(default_factory=dict)
-
-
-class ConfigFile(BaseModel):
-    version: int = 1
-    providers: list[ProviderConfig] = Field(default_factory=list)
+__all__ = [
+    "ActorConfig",
+    "RoleConfig",
+    "IPURuntime",
+    "IPUEntry",
+    "IPUProviderConfig",
+    "IPUConfigFile",
+]

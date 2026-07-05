@@ -72,7 +72,7 @@ async def test_create_character():
         "system_prompt": "你是测试角色，回复简洁。",
         "title": "工具测试员",
         "traits": "用于工具集成测试",
-        "model": "v4-pro",
+        "ipu": "v4-pro",
         "temperature": 0.5,
     })
     assert "[OK]" in result, f"创建应成功: {result[:200]}"
@@ -89,9 +89,9 @@ async def test_create_character():
         cfg = json.load(f)
     assert cfg["identity"]["title"] == "工具测试员"
     assert cfg["identity"]["system_prompt"] == "你是测试角色，回复简洁。"
-    assert cfg["runtime"]["model"] == "v4-pro"
+    assert cfg["runtime"]["ipu"] == "v4-pro"
     assert cfg["runtime"]["temperature"] == 0.5
-    print(f"  [OK] config.json 内容验证: title={cfg['identity']['title']}, model={cfg['runtime']['model']}")
+    print(f"  [OK] config.json 内容验证: title={cfg['identity']['title']}, ipu={cfg['runtime']['ipu']}")
 
     # 重复创建应报错
     dup = await _BUILTIN_HANDLERS["create_character"]({
@@ -141,12 +141,12 @@ def test_update_runtime():
     """修改运行时参数（不触发模型切换）。"""
     result = _BUILTIN_HANDLERS["update_runtime"]({
         "temperature": 0.8,
-        "max_tokens": 2048,
+        "max_icp": 2048,
         "thinking_mode": "auto",
     })
     assert "[OK]" in result, f"更新应成功: {result}"
     assert "temperature=0.8" in result
-    assert "max_tokens=2048" in result
+    assert "max_icp=2048" in result
     print(f"  [OK] update_runtime (no switch): {result.strip()}")
 
     # 验证持久化
@@ -154,8 +154,8 @@ def test_update_runtime():
     with open(config_path, encoding="utf-8") as f:
         cfg = json.load(f)
     assert cfg["runtime"]["temperature"] == 0.8
-    assert cfg["runtime"]["max_tokens"] == 2048
-    print(f"  [OK] 运行时持久化: temp={cfg['runtime']['temperature']}, max_tokens={cfg['runtime']['max_tokens']}")
+    assert cfg["runtime"]["max_icp"] == 2048
+    print(f"  [OK] 运行时持久化: temp={cfg['runtime']['temperature']}, max_icp={cfg['runtime']['max_icp']}")
 
     # temperature 边界值
     result2 = _BUILTIN_HANDLERS["update_runtime"]({"temperature": 3.0})

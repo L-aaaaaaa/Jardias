@@ -9,8 +9,8 @@ from character import get_character_dir
 from common.actor_log import round_start, round_end, max_rounds_reached, format_api_ok
 from common.logger import logger
 from common.utils import separate_print, stream_print, set_display_name, get_silent, set_stream_color
-from data_shape import AIModelProvider, AIModelConfig, ToolCall, RoundOutput, ChatResult
-from .model_context import set_round_meta, pop_switch
+from data_shape import IPUProvider, IPUConfig, ToolCall, RoundOutput, ChatResult
+from .ipu_context import set_round_meta, pop_switch
 
 
 # ————————————————————————————————————————————————————————
@@ -18,47 +18,55 @@ from .model_context import set_round_meta, pop_switch
 # ————————————————————————————————————————————————————————
 
 
-def form_client(provider: AIModelProvider | None = None):
+def form_client(provider: IPUProvider | None = None):
     if provider is None:
-        provider = AIModelProvider()
+        provider = IPUProvider()
     return OpenAI(api_key=provider.api_key, base_url=provider.base_url)
 
 
 def single_completion(
         client: OpenAI,
-        model: str,
+        ipu: str,
         messages: list[dict],
         temperature: float = 0.0,
-        max_tokens: int = 512,
+        max_icp: int = 512,
 ) -> str:
-    """非流式单次 API 调用，返回纯文本（@llm_tool 用）。"""
+    """非流式单次 API 调用，返回纯文本（@llm_tool 用）。
+
+    API 协议层仍使用 max_completion_tokens / model，IPU 抽象层用 max_icp / ipu。
+    """
     response = client.chat.completions.create(
         messages=messages,
-        model=model,
+        model=ipu,
         temperature=temperature,
-        max_completion_tokens=max_tokens,
+        max_completion_tokens=max_icp,
     )
     return response.choices[0].message.content
 
 
-def form_stream(full_context_list: list, client=None, model_config=None):
-    if model_config is None:
-        model_config = AIModelConfig()
+def form_stream(full_context_list: list, client=None, ipu_config=None):
+    """构造流式请求。
+
+    API 协议层使用 OpenAI 兼容字段（model / max_completion_tokens），
+    IPUConfig 字段（ipu / max_icp）在调用层映射。
+    """
+    if ipu_config is None:
+        ipu_config = IPUConfig()
     if client is None:
-        client = OpenAI(api_key=model_config.api_key, base_url=model_config.base_url)
+        client = OpenAI(api_key=ipu_config.api_key, base_url=ipu_config.base_url)
 
     return client.chat.completions.create(
         messages=[{k: v for k, v in m.items() if k != "_reasoning"} for m in full_context_list],
-        model=model_config.model,
-        extra_body=model_config.extra_body,
-        stream=model_config.stream,
-        stream_options=getattr(model_config, "stream_options", None) or None,
-        temperature=model_config.temperature,
-        top_p=model_config.top_p,
-        max_completion_tokens=model_config.max_completion_tokens,
-        tools=model_config.tools if model_config.tools else None,
-        tool_choice=model_config.tool_choice if model_config.tool_choice else None,
-        reasoning_effort=model_config.reasoning_effort,
+        model=ipu_config.ipu,
+        extra_body=ipu_config.extra_body,
+        stream=ipu_config.stream,
+        stream_options=getattr(ipu_config, "stream_options", None) or None,
+        temperature=ipu_config.temperature,
+        top_p=ipu_config.top_p,
+        max_completion_tokens=ipu_config.max_icp,
+        tools=ipu_config.tools if ipu_config.tools else None,
+        tool_choice=ipu_config.tool_choice if ipu_config.tool_choice else None,
+        reasoning_effort=ipu_config.reasoning_effort,
     )
 
 
@@ -465,8 +473,8 @@ def handle_content(delta, state: StreamState):
     stream_print(delta.content)
 
 
-def stream_chat(full_context_list: list[dict[str, str]], model_config=None):
-    stream = form_stream(full_context_list, model_config=model_config)
+def stream_chat(full_context_list: list[dict[str, str]], ipu_config=None):
+    stream = form_stream(full_context_list, ipu_config=ipu_config)
     state = StreamState()
     for chunk in stream:
         if not getattr(chunk, "choices", None):
@@ -488,7 +496,7 @@ MAX_ITER = 999
 async def _run_common_round(
         messages: list[dict],
         iteration: int,
-        model_config,
+        ipu_config,
         reasoning_field: str = "reasoning_details",
         reasoning_inline: bool = False,
         character_name: str = "",
@@ -508,7 +516,7 @@ async def _run_common_round(
     if character_name:
         dump_context(character_name, messages)
 
-    stream = form_stream(messages, model_config=model_config)
+    stream = form_stream(messages, ipu_config=ipu_config)
     t0 = time.time()
     output = collect_round(stream, reasoning_field=reasoning_field, is_tool_round=is_tool_round)
     print()  # 流式输出收尾换行
@@ -543,14 +551,14 @@ async def _run_common_round(
 
 async def reason_action_loop(
         messages: list[dict],
-        model_config,
+        ipu_config,
         reasoning_field: str = "reasoning_details",
         reasoning_inline: bool = False,
         character_name: str = "",
 ) -> ChatResult:
     """公共 Reason-Action 循环：多轮工具调用，直到模型给出最终回复。
 
-    返回 ChatResult — 用 should_switch 替代 ModelSwitched 异常。
+    返回 ChatResult — 用 should_switch 替代 IPUSwitched 异常。
     character_name 非空时，每轮 API 调用前写入 context_latest.md。
     """
     if character_name:
@@ -559,7 +567,7 @@ async def reason_action_loop(
 
     for i in range(MAX_ITER):
         output, messages = await _run_common_round(
-            messages, i, model_config,
+            messages, i, ipu_config,
             reasoning_field=reasoning_field,
             reasoning_inline=reasoning_inline,
             character_name=character_name,
@@ -569,6 +577,27 @@ async def reason_action_loop(
 
         if output.tool_calls:
             _log_tool_calls_common(output.tool_calls)
+            # ── 终端显示：工具调用 ──
+            if not get_silent():
+                separate_print(title="工具调用")
+                for tc in output.tool_calls:
+                    try:
+                        args = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
+                    except Exception:
+                        args = {}
+                    if tc.name == "send_to_character":
+                        recipient = args.get("recipient", "?")
+                        message = args.get("message", "")
+                        print(f"  >> {tc.name} → {recipient}:")
+                        print(f"     {message}")
+                    elif tc.name == "shice_schedule_add":
+                        desc = args.get("message", args.get("description", "")) or "?"
+                        timestamps = args.get("timestamps", [])
+                        count = len(timestamps) if isinstance(timestamps, list) else "?"
+                        print(f"  >> {tc.name}: {desc[:60]}（{count} 个时间点）")
+                    else:
+                        print(f"  >> {tc.name}")
+            # ── 执行 + 显示结果 ──
             for idx, tc in enumerate(output.tool_calls):
                 try:
                     args = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
@@ -577,10 +606,14 @@ async def reason_action_loop(
                     result = f"[Error] {type(e).__name__}: {e}"
 
                 _log_tool_result_common(tc.name, result)
-                if not get_silent() and tc.name != "send_to_character":
-                    if tc.name == "shice_schedule_add":
-                        # 时策工具静默，不打断 LLM 回复流
-                        logger.info(f"  [OK] {tc.name}: {result[:120]}")
+                if not get_silent():
+                    if tc.name == "send_to_character":
+                        # 显示对方角色的完整回复
+                        separate_print(title=f"{tc.name} 回复")
+                        print(f"  {result}")
+                    elif tc.name == "shice_schedule_add":
+                        # 时策注册结果简要显示
+                        print(f"  [OK] {tc.name}: {result[:200]}")
                     else:
                         print(f"\n  [OK] {tc.name}:\n{result[:300]}{'...' if len(result) > 300 else ''}")
                 messages.append({
@@ -603,7 +636,7 @@ async def reason_action_loop(
                         ),
                     })
 
-            # Item 1: 检查模型切换请求（替代 ModelSwitched 异常）
+            # Item 1: 检查模型切换请求（替代 IPUSwitched 异常）
             switch = pop_switch()
             if switch:
                 if character_name:
@@ -612,7 +645,7 @@ async def reason_action_loop(
                     messages=messages,
                     should_switch=True,
                     switch_provider=switch.provider,
-                    switch_model=switch.model,
+                    switch_ipu=switch.model,
                 )
         else:
             round_end(i + 1, "no tool calls" if i == 0 else "tool chain done")
@@ -779,4 +812,3 @@ def dump_context(character_name: str, messages: list[dict]):
         f.write("\n\n".join(blocks) + "\n")
         f.flush()
         os.fsync(f.fileno())
-

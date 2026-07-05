@@ -9,12 +9,9 @@ test_real_run.py — 真实运行集成测试
 
 目标：验证 app.py 启动 → 角色选择 → 消息对话 → 文件落盘 的完整链路。
 """
-import sys
-import os
 import json
-import time
 import subprocess
-import threading
+import sys
 from pathlib import Path
 
 PYTHON = r"D:\B\Python3.10\python.exe"
@@ -25,9 +22,9 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 
 def print_section(title: str):
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  {title}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
 
 # ── 测试 1: 模块导入完整性 ──
@@ -49,7 +46,6 @@ assert result.returncode == 0, f"--list 应返回 0，实际 {result.returncode}
 assert "角色" in result.stdout or "characters" in result.stdout.lower() or "暂无" in result.stdout
 print("  [OK] --list 正常输出角色列表")
 
-
 # ── 测试 2: 创建测试角色并对话 ──
 print_section("测试 2: 角色创建 + 基础对话")
 
@@ -59,23 +55,24 @@ TEST_CHAR = "_test_real_run"
 char_dir = PROJECT_ROOT / "character_data" / TEST_CHAR
 if char_dir.exists():
     import shutil
+
     shutil.rmtree(char_dir)
 
 # 创建测试角色配置
-from data_shape import ActorConfig, IdentityConfig, RuntimeConfig
+from data_shape import ActorConfig, RoleConfig, IPURuntime
 from character.registry import registry
 
 config = ActorConfig(
-    identity=IdentityConfig(
+    identity=RoleConfig(
         system_prompt="你是测试助手，回复简洁。",
         title="集成测试角色",
         traits="测试专用",
     ),
-    runtime=RuntimeConfig(
+    runtime=IPURuntime(
         provider="minimax",
-        model="2.7快",
+        ipu="2.7快",
         temperature=0.5,
-        max_tokens=1024,
+        max_icp=1024,
     ),
 )
 registry.create(TEST_CHAR, config)
@@ -96,7 +93,6 @@ with open(config_path, encoding="utf-8") as f:
     saved = json.load(f)
 assert saved["identity"]["title"] == "集成测试角色", f"配置内容不符: {saved['identity']}"
 print(f"  [OK] config.json 内容正确: title={saved['identity']['title']}")
-
 
 # ── 测试 3: 验证 O(1) 上下文构建 ──
 print_section("测试 3: O(1) 上下文结构验证")
@@ -122,7 +118,6 @@ assert "身份" in ctx_empty[0]["content"], "system 应含身份块"
 assert "引擎" in ctx_empty[0]["content"], "system 应含引擎块"
 assert ctx_empty[-1]["role"] == "user", f"末条应为 user，实际 {ctx_empty[-1]['role']}"
 print("  [OK] 消息角色结构: system → status → history → user")
-
 
 # ── 测试 4: History 完整链路 ──
 print_section("测试 4: History 读写完整链路")
@@ -150,11 +145,10 @@ assert len(h2.messages) == 2
 assert h2.messages[0]["content"] == "测试消息"
 print("  [OK] 重新加载: 数据一致")
 
-
 # ── 测试 5: 配置文件往返 ──
 print_section("测试 5: ActorConfig save → load 往返")
 
-from actor_config.config_io import load_config, save_config
+from character.config_io import load_config, save_config
 
 loaded = load_config(TEST_CHAR)
 assert loaded.identity.title == "集成测试角色"
@@ -171,7 +165,6 @@ assert reloaded.runtime.temperature == 0.9
 assert reloaded.identity.traits == "修改后的特质"
 print(f"  [OK] 配置往返: temp={reloaded.runtime.temperature}, traits={reloaded.identity.traits}")
 
-
 # ── 测试 6: 清理 ──
 print_section("测试 6: 角色删除")
 
@@ -179,7 +172,6 @@ registry.delete(TEST_CHAR)
 assert not registry.exists(TEST_CHAR), "delete 后 exists 应为 False"
 assert not char_dir.exists(), "角色目录应被删除"
 print("  [OK] 角色清理完成")
-
 
 # ── 汇总 ──
 print_section("集成测试结果汇总")
@@ -192,5 +184,4 @@ print("""
   [OK] 测试 6: 角色删除
 """)
 print("  全部 6 项集成测试通过")
-print("="*60)
-
+print("=" * 60)

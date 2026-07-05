@@ -11,7 +11,7 @@ from pathlib import Path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
-from data_shape import ActorConfig, IdentityConfig, RuntimeConfig
+from data_shape import ActorConfig, RoleConfig, IPURuntime
 from character.registry import registry, CharacterRegistry
 
 
@@ -57,8 +57,8 @@ def test_scan_empty():
 def test_create_and_exists():
     """创建角色 → exists 返回 True。"""
     config = ActorConfig(
-        identity=IdentityConfig(title="注册表测试A"),
-        runtime=RuntimeConfig(provider="minimax", model="2.7"),
+        identity=RoleConfig(title="注册表测试A"),
+        runtime=IPURuntime(provider="minimax", ipu="2.7"),
     )
     registry.create(TEST_CHARS[0], config)
     assert registry.exists(TEST_CHARS[0]), "exists 应返回 True"
@@ -68,7 +68,7 @@ def test_create_and_exists():
 
 def test_create_duplicate_raises():
     """创建重复角色应抛出 ValueError。"""
-    config = ActorConfig(identity=IdentityConfig(title="重复测试"))
+    config = ActorConfig(identity=RoleConfig(title="重复测试"))
     registry.create(TEST_CHARS[1], config)
 
     raised = False
@@ -84,14 +84,14 @@ def test_create_duplicate_raises():
 def test_get_config():
     """get_config 应返回完整角色配置。"""
     config = ActorConfig(
-        identity=IdentityConfig(
+        identity=RoleConfig(
             system_prompt="你好，我是测试角色。",
             title="测试配置读取",
             traits="仔细",
         ),
-        runtime=RuntimeConfig(
+        runtime=IPURuntime(
             provider="deepseek",
-            model="v4",
+            ipu="v4",
             temperature=0.3,
         ),
     )
@@ -101,7 +101,7 @@ def test_get_config():
     assert loaded.identity.title == "测试配置读取"
     assert loaded.identity.system_prompt == "你好，我是测试角色。"
     assert loaded.runtime.provider == "deepseek"
-    assert loaded.runtime.model == "v4"
+    assert loaded.runtime.ipu == "v4"
     assert loaded.runtime.temperature == 0.3
     print(f"  [OK] get_config: 配置读取完整一致")
 
@@ -127,7 +127,7 @@ def test_cannot_delete_default():
 
 def test_get_context_latest_path():
     """get_context_latest_path 返回正确路径。"""
-    registry.create(TEST_CHARS[0], ActorConfig(identity=IdentityConfig(title="路径测试")))
+    registry.create(TEST_CHARS[0], ActorConfig(identity=RoleConfig(title="路径测试")))
     path = registry.get_context_latest_path(TEST_CHARS[0])
     assert isinstance(path, Path)
     assert path.name == "context_latest.md"

@@ -85,9 +85,13 @@ def separate_print(separator: str = "─", title: str = "", length: int = 50,
 
 
 def stream_print(content: str, end: str = "", flush: bool = True, color: str | None = None) -> None:
-    """逐字流式输出到终端。跳过空白内容（避免 MiniMax thinking→content 切换时空行泛滥）。"""
-    if _silent or not content.strip():
+    """逐字流式输出到终端。跳过空白泛滥内容（避免 MiniMax thinking→content 切换时空行泛滥），但保留单空格等有意义字符。"""
+    if _silent:
         return
+    if not content.strip():
+        # 跳过纯空白行（>1 个字符），保留单个空格/换行等有意义内容
+        if len(content) > 1:
+            return
     use_color = color or _stream_color
     ansi_code = _COLORS.get(use_color, "") if use_color else ""
     try:

@@ -1,5 +1,5 @@
 """
-model_client.py — model_client 模块数据形状。
+ipu_client.py — 智能基元（IPU）客户端与对话结果数据形状。
 """
 import os
 from dataclasses import dataclass
@@ -7,17 +7,18 @@ from dataclasses import dataclass
 from pydantic import BaseModel
 
 
-# ── LLM 客户端配置 ──
+# ── IPU 客户端配置 ──
 
-class AIModelConfig(BaseModel):
-    model: str = "MiniMax-M2.7"
+class IPUConfig(BaseModel):
+    """单次 IPU 调用的客户端配置（IPURuntime 在调用层映射到此结构）。"""
+    ipu: str = "MiniMax-M2.7"
     base_url: str = "https://api.minimax.chat/v1"
     api_key: str = ""
     extra_body: dict = {}
     stream: bool = True
     tools: list = []
     tool_choice: str = "auto"
-    max_completion_tokens: int = 2048
+    max_icp: int = 2048  # 最大输出 ICP；调用层映射到 API max_tokens
     temperature: float = 1.0
     top_p: float = 0.95
     reasoning_effort: str = "high"
@@ -29,7 +30,8 @@ class AIModelConfig(BaseModel):
 
 # ── 供应商 ──
 
-class AIModelProvider(BaseModel):
+class IPUProvider(BaseModel):
+    """供应商连接信息（api_key 从环境变量读取）。"""
     api_key: str = os.getenv("MINIMAX_API_KEY")
     base_url: str = "https://api.minimax.chat.v1"
 
@@ -54,11 +56,11 @@ class RoundOutput:
 
 @dataclass
 class ChatResult:
-    """一轮对话的结构化结果。should_switch 替代了 ModelSwitched 异常。"""
+    """一轮对话的结构化结果。should_switch 替代了 IPUSwitched 异常。"""
     messages: list[dict]
     should_switch: bool = False
     switch_provider: str = ""
-    switch_model: str = ""
+    switch_ipu: str = ""
 
 
 # ── 每轮元数据 ──
@@ -71,9 +73,9 @@ class RoundMeta:
     error: str | None = None
 
 
-# ── 模型切换 ──
+# ── 智能基元切换 ──
 
 @dataclass
-class ModelSwitch:
+class IPUSwitch:
     provider: str
-    model: str
+    ipu: str

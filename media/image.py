@@ -1,11 +1,11 @@
-"""image — 图片检测与 vision 模型自动切换。"""
+"""image — 图片检测与 vision 智能基元自动切换。"""
 import base64
 import mimetypes
 import os
 import re as _re_module
 
-from actor_config import MODEL_NAMES, get_model_capabilities
 from common.logger import logger
+from yinao import IPU_REGISTRY, get_ipu_capabilities
 
 _IMG_EXTS = r"\.(?:png|jpg|jpeg|webp|gif|bmp)"
 _IMG_EXT_END = r"(?:\?[^\s]*)?(?:\s|$)"
@@ -22,7 +22,6 @@ def detect_image_url(user_input: str) -> str | None:
 
 
 def detect_local_image(user_input: str) -> str | None:
-    # 使用非贪婪匹配，支持路径中的空格（如 "能代 · 碧蓝航线"）
     m = _re_module.search(
         rf'[A-Za-z]:[\\/].+?{_IMG_EXTS}{_IMG_EXT_END}'
         rf'|(?:(?:~|\.)?/.+?){_IMG_EXTS}{_IMG_EXT_END}',
@@ -52,38 +51,38 @@ def local_image_to_data_url(filepath: str) -> str | None:
         return None
 
 
-def find_vision_model() -> tuple[str, str] | None:
-    for provider, models in MODEL_NAMES.items():
-        for short, full in models.items():
-            caps = get_model_capabilities(provider, short)
+def find_vision_ipu() -> tuple[str, str] | None:
+    for provider, ipus in IPU_REGISTRY.items():
+        for short, full in ipus.items():
+            caps = get_ipu_capabilities(provider, short)
             if "vision" in caps:
                 return provider, short
     return None
 
 
 def auto_switch_for_vision(ctx, image_url: str) -> bool:
-    """检测到图片但当前模型无 vision → 自动切换。返回是否发生了切换。"""
-    my_caps = get_model_capabilities(ctx.config.runtime.provider, ctx.config.runtime.model)
+    """检测到图片但当前智能基元无 vision → 自动切换。返回是否发生了切换。"""
+    my_caps = get_ipu_capabilities(ctx.config.runtime.provider, ctx.config.runtime.ipu)
     if "vision" in my_caps:
         return False
 
-    target = find_vision_model()
+    target = find_vision_ipu()
     if not target:
-        logger.warning("No vision-capable model available")
+        logger.warning("No vision-capable IPU available")
         return False
 
-    from actor_config import save_config
+    from yinao import save_config
     from common.actor_log import model_switch as log_model_switch
 
-    t_prov, t_model = target
-    old_prov, old_model = ctx.config.runtime.provider, ctx.config.runtime.model
-    old_full = ctx.model_config.model
+    t_prov, t_ipu = target
+    old_prov, old_ipu = ctx.config.runtime.provider, ctx.config.runtime.ipu
+    old_full = ctx.ipu_config.ipu
 
     ctx.config.runtime.provider = t_prov
-    ctx.config.runtime.model = t_model
+    ctx.config.runtime.ipu = t_ipu
     save_config(ctx.config, ctx.character_name, config_dir=ctx.config_dir)
 
-    from model_client.switch import reload_after_switch
+    from yinao.ipu_client import reload_after_switch
     reload_after_switch(ctx)
-    log_model_switch(old_prov, old_model, ctx.provider, ctx.model, reason="image detected → vision model")
+    log_model_switch(old_prov, old_ipu, ctx.provider, ctx.ipu, reason="image detected → vision IPU")
     return True

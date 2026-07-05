@@ -4,20 +4,16 @@ import os
 import sys
 from datetime import datetime
 
-from actor_config import (
-    ActorConfig,
-    init_config,
-    load_config,
-    save_config,
-    resolve_model,
-)
 from character import get_history_path, ensure_dirs
 from character.history import History
 from common.actor_log import bootstrap_summary
 from common.logger import logger
-from model_client.common_client_util import single_completion
-from model_client.switch import resolve_chat, sync_config_to_model
+from character.config_io import init_config, load_config, save_config
+from data_shape import ActorConfig
 from tool.builtin import set_actor, tools
+from yinao import resolve_ipu
+from yinao.ipu_client import resolve_chat, sync_config_to_ipu
+from yinao.ipu_client.common_client_util import single_completion
 
 
 def _default_system_prompt() -> str:
@@ -27,7 +23,7 @@ def _default_system_prompt() -> str:
     )
 
 
-def bootstrap(provider: str, model: str, character_name: str = "default"):
+def bootstrap(provider: str, ipu: str, character_name: str = "default"):
     from dataclasses import dataclass
 
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -57,16 +53,15 @@ def bootstrap(provider: str, model: str, character_name: str = "default"):
         config = init_config(character_name, config_dir=config_dir)
         config.identity.system_prompt = _default_system_prompt()
         config.runtime.provider = provider
-        config.runtime.model = model
+        config.runtime.ipu = ipu
         save_config(config, character_name, config_dir=config_dir)
     else:
         if not config.identity.system_prompt:
             config.identity.system_prompt = _default_system_prompt()
-        # 使用角色自己的 provider/model，CLI 参数仅新建时作 fallback
         if config.runtime.provider:
             provider = config.runtime.provider
-        if config.runtime.model:
-            model = config.runtime.model
+        if config.runtime.ipu:
+            ipu = config.runtime.ipu
 
     history = History(history_path).load()
 
@@ -85,35 +80,35 @@ def bootstrap(provider: str, model: str, character_name: str = "default"):
     class AppContext:
         config: ActorConfig
         provider: str
-        model: str
+        ipu: str
         chat_fn: object
-        model_config: object
+        ipu_config: object
         history: History
         config_dir: str
         turn_num: int
         character_name: str = ""
         last_config_sig: str = ""
 
-    _prov, model_config = resolve_model(provider, model)
+    _prov, ipu_config = resolve_ipu(provider, ipu)
 
     ctx = AppContext(
         config=config,
         provider=provider,
-        model=model,
+        ipu=ipu,
         chat_fn=resolve_chat(provider),
-        model_config=model_config,
+        ipu_config=ipu_config,
         history=history,
         config_dir=config_dir,
         turn_num=int(len(history.messages) / 2) + 1,
         character_name=character_name,
     )
-    sync_config_to_model(ctx.config, ctx.model_config)
+    sync_config_to_ipu(ctx.config, ctx.ipu_config)
 
-    from model_client.model_context import set_actual_model
-    set_actual_model(provider, model)
+    from yinao.ipu_client.ipu_context import set_active_ipu
+    set_active_ipu(provider, ipu)
 
     tool_defs = tools.get_definitions()
-    bootstrap_summary(len(ctx.history.messages), ctx.provider, ctx.model, len(tool_defs))
+    bootstrap_summary(len(ctx.history.messages), ctx.provider, ctx.ipu, len(tool_defs))
 
     _setup_llm_executor(ctx)
     _setup_scheduler(ctx)
@@ -123,34 +118,31 @@ def bootstrap(provider: str, model: str, character_name: str = "default"):
 def _setup_llm_executor(ctx):
     """创建并注入 @llm_tool 旁路小模型执行器（支持跨 provider 模型路由）。"""
     from tool.llm_tool import set_llm_executor
-    from model_client.common_client_util import form_client
-    from actor_config.provider_manager import provider_manager
-    from model_client.switch import _next_provider, _pick_fallback_model
-    from data_shape import AIModelProvider
+    from yinao.ipu_client.common_client_util import form_client
+    from yinao.provider_manager import provider_manager
+    from yinao.ipu_client import _next_provider, _pick_fallback_ipu
+    from data_shape import IPUProvider
 
-    # 为所有可用 provider 预建 client
     _provider_clients: dict[str, object] = {}
-    _model_to_provider: dict[str, str] = {}
-    _model_to_id: dict[str, str] = {}  # 模型展示名 → API model ID
+    _ipu_to_provider: dict[str, str] = {}
+    _ipu_to_id: dict[str, str] = {}
     providers_cfg = provider_manager.load()
     for provider_cfg in providers_cfg.providers:
         pname = provider_cfg.name
         api_key = os.environ.get(provider_cfg.api_key_env, "")
-        pobj = AIModelProvider(
+        pobj = IPUProvider(
             api_key=api_key,
             base_url=provider_cfg.base_url,
-            model="",
         )
         _provider_clients[pname] = form_client(pobj)
-        for model_name, model_entry in provider_cfg.models.items():
-            _model_to_provider[model_name] = pname
-            _model_to_id[model_name] = model_entry.get("id", model_name)
+        for ipu_name, ipu_entry in provider_cfg.ipus.items():
+            _ipu_to_provider[ipu_name] = pname
+            _ipu_to_id[ipu_name] = ipu_entry.get("id", ipu_name)
 
-    # 默认 client（向后兼容：未知 model 走当前角色 provider）
-    _default_client = form_client(ctx.model_config)
+    _default_client = form_client(ctx.ipu_config)
 
-    async def execute(model: str, system_prompt: str, user_message: str, output_schema: dict):
-        """调用 LLM 完成摘要/分析（带 provider 自动转移，复用对话级切换逻辑）。"""
+    async def execute(ipu: str, system_prompt: str, user_message: str, output_schema: dict):
+        """调用 IPU 完成摘要/分析（带 provider 自动转移，复用对话级切换逻辑）。"""
         schema_keys = ", ".join(f'"{k}": {v}' for k, v in output_schema.items())
         wrapped_user = (
             f"{user_message}\n\n"
@@ -164,36 +156,26 @@ def _setup_llm_executor(ctx):
         ]
 
         def _extract_json(text: str) -> str:
-            """从 LLM 输出中鲁棒提取 JSON：找首尾括号、去代码块、修常见错误。"""
             text = text.strip()
-            # 去掉 markdown 代码块包裹
             if text.startswith("```"):
                 lines = text.split("\n")
                 text = "\n".join(lines[1:]) if len(lines) > 1 else text
                 if text.rstrip().endswith("```"):
                     text = text[:text.rfind("```")].strip()
-            # 找到 JSON 起始位置（跳过 LLM 絮絮叨叨的前言）
             for opener in ("[", "{"):
                 idx = text.find(opener)
                 if idx != -1:
                     text = text[idx:]
                     break
-            # 修正常见 LLM JSON 错误
             import re
-            text = re.sub(r',\s*([}\]])', r'\1', text)  # 行尾多余逗号
-            text = re.sub(r'(?<!\\)"([^"]*?)(?<!\\)"', lambda m: '"' + m.group(1).replace('"', '\\"') + '"',
-                text)  # 未转义的内嵌引号（保守） 实际上这个正则太复杂，跳过
+            text = re.sub(r',\s*([}\]])', r'\1', text)
             return text.strip()
 
         def _repair_json(text: str) -> str:
-            """修复常见 LLM JSON 错误后尝试解析。"""
             import re
-            # 1. 移除行尾多余逗号
             text = re.sub(r',\s*\n\s*([}\]])', r'\n\1', text)
             text = re.sub(r',\s*([}\]])$', r'\1', text, flags=re.MULTILINE)
-            # 2. 移除 JSON 数组/对象末尾的逗号
             text = re.sub(r',(\s*[}\]])', r'\1', text)
-            # 3. 检查括号平衡（仅对 {} 和 []）
             brackets = {"[": "]", "{": "}"}
             stack = []
             balanced = []
@@ -204,77 +186,69 @@ def _setup_llm_executor(ctx):
                     if stack and brackets.get(stack[-1]) == ch:
                         stack.pop()
                 balanced.append(ch)
-            # 补全未闭合的括号
             while stack:
                 balanced.append(brackets[stack.pop()])
             return "".join(balanced)
 
-        # 构建回退链：首选模型 → 跨 provider 自动切换
-        primary_provider = _model_to_provider.get(model)
+        primary_provider = _ipu_to_provider.get(ipu)
         fallback_chain = []
         if primary_provider and primary_provider in _provider_clients:
-            fallback_chain.append((model, primary_provider,
+            fallback_chain.append((ipu, primary_provider,
                                    _provider_clients[primary_provider],
-                                   _model_to_id.get(model, model)))
+                                   _ipu_to_id.get(ipu, ipu)))
 
-        # 其他 provider 的模型作为备选
         tried_providers = {primary_provider} if primary_provider else set()
-        for _ in range(3):  # 最多额外 3 个备选
+        for _ in range(3):
             next_p = _next_provider("", tried_providers)
             if not next_p:
                 break
             tried_providers.add(next_p)
-            fb_model = _pick_fallback_model(next_p)
-            fallback_chain.append((fb_model, next_p,
+            fb_ipu = _pick_fallback_ipu(next_p)
+            fallback_chain.append((fb_ipu, next_p,
                                    _provider_clients[next_p],
-                                   _model_to_id.get(fb_model, fb_model)))
+                                   _ipu_to_id.get(fb_ipu, fb_ipu)))
 
-        # 依次尝试
         last_error = None
-        for fb_model, fb_provider, fb_client, fb_api_model in fallback_chain:
+        for fb_ipu, fb_provider, fb_client, fb_api_ipu in fallback_chain:
             try:
-                raw_text = single_completion(fb_client, fb_api_model, messages,
-                    temperature=0.0, max_tokens=4096)
+                raw_text = single_completion(fb_client, fb_api_ipu, messages,
+                    temperature=0.0, max_icp=4096)
                 text = _extract_json(raw_text)
                 try:
                     result = json.loads(text)
                 except json.JSONDecodeError as je:
-                    # 修复常见 LLM JSON 错误再试
                     repaired = _repair_json(text)
                     try:
                         result = json.loads(repaired)
                     except json.JSONDecodeError:
-                        # 两种尝试都失败，记录片段便于诊断
-                        logger.warning(f"  [LLM-TOOL] {fb_model} raw(-100 chars): {repr(raw_text[-100:])}")
+                        logger.warning(f"  [LLM-TOOL] {fb_ipu} raw(-100 chars): {repr(raw_text[-100:])}")
                         raise je
-                # LLM 可能直接返回数组 [...] 而非包裹对象 → 自动包装
                 if isinstance(result, list):
                     array_key = next((k for k, v in output_schema.items() if "array" in v), None)
                     if array_key:
                         result = {array_key: result}
-                if fb_model != model:
-                    logger.info(f"  [LLM-TOOL] fallback success | {model}->{fb_model} | provider={fb_provider}")
+                if fb_ipu != ipu:
+                    logger.info(f"  [LLM-TOOL] fallback success | {ipu}->{fb_ipu} | provider={fb_provider}")
                 return result
             except Exception as e:
                 last_error = e
-                # 检查是否是耗尽类错误，记录到熔断器
-                from model_client.circuit_breaker import is_exhausted_error
-                from model_client.model_context import record_model_failure
+                from yinao.ipu_client import is_exhausted_error
+                from yinao.ipu_client.ipu_context import record_ipu_failure
                 try:
                     if is_exhausted_error(e):
-                        record_model_failure(fb_provider, e)
+                        record_ipu_failure(fb_provider, e)
                 except Exception:
                     pass
-                logger.warning(f"  [LLM-TOOL] {fb_model} failed ({type(e).__name__}), trying next...")
+                logger.warning(f"  [LLM-TOOL] {fb_ipu} failed ({type(e).__name__}), trying next...")
                 continue
 
         raise RuntimeError(
-            f"LLM tool '{model}' failed after {len(fallback_chain)} attempt(s). "
+            f"LLM tool '{ipu}' failed after {len(fallback_chain)} attempt(s). "
             f"Last error: {type(last_error).__name__}: {last_error}"
         )
 
     set_llm_executor(execute)
-    logger.info(f"  [LLM-TOOL] executor ready | provider={ctx.provider} | base={ctx.model_config.base_url}")
+    logger.info(f"  [LLM-TOOL] executor ready | provider={ctx.provider} | base={ctx.ipu_config.base_url}")
 
 
 def _setup_scheduler(ctx):
@@ -282,17 +256,15 @@ def _setup_scheduler(ctx):
     import asyncio
     import os
     from schedule import TemporalScheduler
-    from schedule.strategies import wall_ms
     from tool.builtin import set_scheduler as _set_tool_scheduler
 
     store_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                             "character_data", "_schedules")
+        "character_data", "_schedules")
     os.makedirs(store_dir, exist_ok=True)
     store_path = os.path.join(store_dir, "schedules.json")
 
     async def on_job_fire(fire_ctx):
-        """时策触发回调：只写入 trigger 到历史，不调 LLM。
-        conversation_loop 统一处理展示，避免重复回复。"""
+        """时策触发回调：只写入 trigger 到历史，不调 IPU。"""
         from character.history import History
         from character import get_history_path
 

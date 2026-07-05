@@ -24,17 +24,17 @@ def set_llm_executor(fn: Callable):
 
 def llm_tool(
     *,
-    model: str,
+    ipu: str,
     output_schema: dict[str, str],
     system: str,
 ):
-    """装饰器：将函数标记为旁路 LLM 工具。
+    """装饰器：将函数标记为旁路智能基元调用工具。
 
     调用时 → 组 system + user prompt → 单次 API → JSON 解析 → 返回 dict。
 
     示例:
         @llm_tool(
-            model="qwen-turbo",
+            ipu="qwen-turbo",
             output_schema={"topic": "str", "detail": "str"},
             system="你是对话摘要器。输出 JSON。"
         )
@@ -44,7 +44,7 @@ def llm_tool(
     def decorator(fn: Callable):
         name = fn.__name__
         _registry[name] = {
-            "model": model,
+            "ipu": ipu,
             "output_schema": output_schema,
             "system": system,
             "fn": fn,
@@ -58,7 +58,7 @@ def llm_tool(
                 )
             user_text = "\n".join(f"{k}:\n{v}" for k, v in kwargs.items())
             return await _executor(
-                model=model,
+                ipu=ipu,
                 system_prompt=system,
                 user_message=user_text,
                 output_schema=output_schema,

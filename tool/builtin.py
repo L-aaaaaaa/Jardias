@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import inspect as _inspect
 import pathlib
@@ -11,6 +11,7 @@ def _log():
     """延迟导入 logger，避免 tool.builtin <-> common 循环依赖。"""
     from common.logger import logger
     return logger
+
 
 # ── 工具执行调度表（延迟赋值，避免循环导入）──
 _BUILTIN_HANDLERS: dict[str, callable] = {}
@@ -88,27 +89,27 @@ def set_actor(name: str):
 # ── 自手术工具实现 ──
 
 def _handle_update_runtime(arguments: dict) -> str:
-    """更新运行时参数（model/temperature/top_p/max_tokens/thinking_mode 任意组合）。
-    如果 model 变了 → 抛 ModelSwitched 让 app.py 重建 client。
+    """更新运行时参数（ipu/temperature/top_p/max_icp/thinking_mode 任意组合）。
+    如果 ipu 变了 → 抛 ModelSwitched 让 app.py 重建 client。
     其他参数 → 直接写 JSON，下轮生效。
     """
-    from actor_config import load_config, save_config
-    from model_client.model_context import resolve_provider, get_actual_model, is_provider_available, \
+    from character.config_io import load_config, save_config
+    from yinao.ipu_client.ipu_context import resolve_ipu_provider, get_active_ipu, is_provider_available, \
         get_circuit_status
 
     config = load_config(_current_actor)
     rt = config.runtime
-    actual_model = get_actual_model()  # 实际运行引擎（fallback 后可能与文件不同）
+    actual_ipu = get_active_ipu()  # 实际运行引擎（fallback 后可能与文件不同）
 
     changes = []
-    model_changed = False
+    ipu_changed = False
 
-    if "model" in arguments:
-        new_model = arguments["model"]
+    if "ipu" in arguments:
+        new_ipu = arguments["ipu"]
         # 比较 config 文件 AND 实际运行状态（fallback 可能未持久化）
-        if new_model != rt.model or (actual_model and new_model != actual_model):
+        if new_ipu != rt.ipu or (actual_ipu and new_ipu != actual_ipu):
             # 切换前检查目标供应商是否已熔断
-            provider = resolve_provider(new_model)
+            provider = resolve_ipu_provider(new_ipu)
             if provider and not is_provider_available(provider):
                 status = get_circuit_status().get(provider, {})
                 remain = status.get("reset_remaining_sec", "?")
@@ -128,9 +129,9 @@ def _handle_update_runtime(arguments: dict) -> str:
                     f"原因: {last_err}\n"
                     f"当前供应商状态:\n{formatted_status}"
                 )
-            rt.model = new_model
-            changes.append(f"model={new_model}")
-            model_changed = True
+            rt.ipu = new_ipu
+            changes.append(f"ipu={new_ipu}")
+            ipu_changed = True
 
     if "temperature" in arguments:
         t = float(arguments["temperature"])
@@ -146,12 +147,12 @@ def _handle_update_runtime(arguments: dict) -> str:
         rt.top_p = p
         changes.append(f"top_p={p}")
 
-    if "max_tokens" in arguments:
-        n = int(arguments["max_tokens"])
+    if "max_icp" in arguments:
+        n = int(arguments["max_icp"])
         if n <= 0:
-            return f"[Error] max_tokens must be positive, got {n}"
-        rt.max_tokens = n
-        changes.append(f"max_tokens={n}")
+            return f"[Error] max_icp must be positive, got {n}"
+        rt.max_icp = n
+        changes.append(f"max_icp={n}")
 
     if "thinking_enabled" in arguments:
         enabled = bool(arguments["thinking_enabled"])
@@ -186,19 +187,19 @@ def _handle_update_runtime(arguments: dict) -> str:
 
     save_config(config, _current_actor)
 
-    if model_changed:
-        provider = resolve_provider(rt.model)
+    if ipu_changed:
+        provider = resolve_ipu_provider(rt.ipu)
         if provider is None:
-            return f"[Error] 无法解析模型 '{rt.model}' 的 provider。可用模型: 2.7快, 2.7, chat, 千问3.6+, kimi 2.5, glm-5, M2.5"
-        if rt.model == provider:
-            from actor_config import MODEL_NAMES
-            first_model = next(iter(MODEL_NAMES[provider].keys()))
-            rt.model = first_model
+            return f"[Error] 无法解析智能基元 '{rt.ipu}' 的 provider。可用智能基元: 2.7快, 2.7, chat, 千问3.6+, kimi 2.5, glm-5, M2.5"
+        if rt.ipu == provider:
+            from yinao import IPU_REGISTRY
+            first_ipu = next(iter(IPU_REGISTRY[provider].keys()))
+            rt.ipu = first_ipu
         rt.provider = provider
         save_config(config, _current_actor)
-        from model_client.model_context import request_switch
-        request_switch(provider, rt.model)
-        return f"[OK] runtime updated: {', '.join(changes)} → 将切换至 {provider}/{rt.model}"
+        from yinao.ipu_client.ipu_context import request_switch
+        request_switch(provider, rt.ipu)
+        return f"[OK] runtime updated: {', '.join(changes)} → 将切换至 {provider}/{rt.ipu}"
 
     return f"[OK] runtime updated: {', '.join(changes)}"
 
@@ -207,7 +208,7 @@ def _handle_update_identity(arguments: dict) -> str:
     """更新身份参数（system_prompt/role/description/max_iterations 任意组合）。
     写 JSON 后下轮生效。
     """
-    from actor_config import load_config, save_config
+    from character.config_io import load_config, save_config
 
     config = load_config(_current_actor)
     ident = config.identity
@@ -314,12 +315,12 @@ async def _handle_create_character(arguments: dict) -> str:
     system_prompt = arguments["system_prompt"]
     title = arguments.get("title", name)
     traits = arguments.get("traits", "")
-    model = arguments.get("model", "v4-pro")
+    ipu = arguments.get("ipu", "v4-pro")
     provider_arg = arguments.get("provider")  # 可能为 None
 
     from character.registry import registry
-    from data_shape import ActorConfig, IdentityConfig, RuntimeConfig
-    from actor_config import MODEL_NAMES
+    from data_shape import ActorConfig, RoleConfig, IPURuntime
+    from yinao import IPU_REGISTRY
 
     if registry.exists(name):
         return f"[Error] 角色 {name} 已存在"
@@ -330,44 +331,44 @@ async def _handle_create_character(arguments: dict) -> str:
     # ── 解析 provider ──
     if provider_arg:
         provider = provider_arg
-        # 校验 model 在此 provider 下存在
-        if model not in MODEL_NAMES.get(provider, {}):
-            available = ", ".join(MODEL_NAMES.get(provider, {}).keys())
+        # 校验 ipu 在此 provider 下存在
+        if ipu not in IPU_REGISTRY.get(provider, {}):
+            available = ", ".join(IPU_REGISTRY.get(provider, {}).keys())
             return (
-                f"[Error] 模型 '{model}' 在供应商 {provider} 下不存在。\n"
-                f"{provider} 可用模型: {available if available else '(无)'}"
+                f"[Error] 智能基元 '{ipu}' 在供应商 {provider} 下不存在。\n"
+                f"{provider} 可用智能基元: {available if available else '(无)'}"
             )
     else:
-        # 未指定 provider → 自动从 MODEL_NAMES 反向查找
-        found_providers = [p for p, ms in MODEL_NAMES.items() if model in ms]
+        # 未指定 provider → 自动从 IPU_REGISTRY 反向查找
+        found_providers = [p for p, ms in IPU_REGISTRY.items() if ipu in ms]
         if not found_providers:
-            all_models = []
-            for p, ms in MODEL_NAMES.items():
+            all_ipus = []
+            for p, ms in IPU_REGISTRY.items():
                 for m in ms:
-                    all_models.append(f"{p}/{m}")
+                    all_ipus.append(f"{p}/{m}")
             return (
-                f"[Error] 模型 '{model}' 在所有供应商中都不存在。\n"
-                f"可用模型: {', '.join(all_models)}"
+                f"[Error] 智能基元 '{ipu}' 在所有供应商中都不存在。\n"
+                f"可用智能基元: {', '.join(all_ipus)}"
             )
         if len(found_providers) > 1:
             return (
-                f"[Error] 模型 '{model}' 存在于多个供应商 ({', '.join(found_providers)})。\n"
+                f"[Error] 智能基元 '{ipu}' 存在于多个供应商 ({', '.join(found_providers)})。\n"
                 f"请显式指定 provider 参数来消除歧义。"
             )
         provider = found_providers[0]
 
     config = ActorConfig(
-        identity=IdentityConfig(
+        identity=RoleConfig(
             system_prompt=system_prompt,
             title=title,
             traits=traits,
         ),
-        runtime=RuntimeConfig(
+        runtime=IPURuntime(
             provider=provider,
-            model=model,
+            ipu=ipu,
             temperature=float(arguments.get("temperature", 1.0)),
             top_p=float(arguments.get("top_p", 0.95)),
-            max_tokens=int(arguments.get("max_tokens", 8192)),
+            max_icp=int(arguments.get("max_icp", 8192)),
             thinking_mode=str(arguments.get("thinking_mode", "auto")),
             reasoning_effort=str(arguments.get("reasoning_effort", "high")),
             thinking_enabled=bool(arguments.get("thinking_enabled", True)),
@@ -378,7 +379,7 @@ async def _handle_create_character(arguments: dict) -> str:
         f"[OK] 角色 {name} 已创建\n"
         f"  头衔: {title}\n"
         f"  特质: {traits}\n"
-        f"  引擎: {provider}/{model}"
+        f"  引擎: {provider}/{ipu}"
     )
 
 
@@ -393,11 +394,11 @@ def _handle_list_characters() -> str:
         try:
             config = registry.get_config(name)
             prov = config.runtime.provider
-            model = config.runtime.model
+            ipu = config.runtime.ipu
             title = config.identity.title or "(未设置头衔)"
             traits = config.identity.traits or "(无描述)"
             active = "(当前)" if name == _current_actor else ""
-            lines.append(f"  {name}{active}: {title} | {prov}/{model} | {traits}")
+            lines.append(f"  {name}{active}: {title} | {prov}/{ipu} | {traits}")
         except Exception:
             lines.append(f"  {name}: (配置读取失败)")
     return "\n".join(lines)
@@ -421,23 +422,23 @@ async def _handle_send_to_character(arguments: dict) -> str:
     # ── 1. 获取双方配置 ──
     recipient_config = registry.get_config(recipient)
     recipient_provider = recipient_config.runtime.provider
-    recipient_model_short = recipient_config.runtime.model
+    recipient_ipu_short = recipient_config.runtime.ipu
 
     # 构建接收者的 context（引擎信息块 + 身份）
 
-    from actor_config import resolve_model as resolve_model_fn
+    from yinao import resolve_ipu as resolve_ipu_fn
     try:
-        recipient_provider_info, recipient_mc = resolve_model_fn(recipient_provider, recipient_model_short)
+        recipient_provider_info, recipient_ipu_config = resolve_ipu_fn(recipient_provider, recipient_ipu_short)
     except KeyError as e:
-        return f"[Error] 角色 {recipient} 配置无效: {e}。请用 update_runtime 修正其 model 参数。"
+        return f"[Error] 角色 {recipient} 配置无效: {e}。请用 update_runtime 修正其 ipu 参数。"
 
     # ── 2. 写入接收者历史（接收者视角：收到新消息） ──
     recipient_history = History(str(get_history_path(recipient))).load()
     recipient_history.append_pair(f"[来自 {_current_actor} 的消息]\n{message}", "")
 
     # ── 同步接收者运行时配置到 model_config（之前遗漏：MC 裸建全是默认值）──
-    from model_client.switch import sync_config_to_model
-    sync_config_to_model(recipient_config, recipient_mc)
+    from yinao.ipu_client import sync_config_to_ipu
+    sync_config_to_ipu(recipient_config, recipient_ipu_config)
 
     # ── 3. 构建接收者的 messages（复用 form_full_context 的 system 消息格式）──
     from common.context import build_system_message
@@ -457,11 +458,11 @@ async def _handle_send_to_character(arguments: dict) -> str:
         is_first = False
 
     # ── 4. 调用接收者的 LLM ──
-    from model_client.switch import resolve_chat
+    from yinao.ipu_client import resolve_chat
     from common.logger import logger as _logger
 
     _logger.info(
-        f"  [send_to_character] {_current_actor} → {recipient} | 引擎 {recipient_provider}/{recipient_model_short} | 历史 {len(all_msgs)} 条")
+        f"  [send_to_character] {_current_actor} → {recipient} | 引擎 {recipient_provider}/{recipient_ipu_short} | 历史 {len(all_msgs)} 条")
 
     from common.utils import set_display_name as _set_dn
 
@@ -470,7 +471,7 @@ async def _handle_send_to_character(arguments: dict) -> str:
     set_actor(recipient)  # _current_actor → 接收者（update_runtime/update_identity 操作正确目标）
 
     # ── 调用接收者 LLM，失败时自动尝试其他供应商 ──
-    from model_client.model_context import MODEL_NAMES as _MN, list_providers as _list_prov
+    from yinao.ipu_client.ipu_context import IPU_REGISTRY as _MN, list_ipu_providers as _list_prov
     tried_providers = {recipient_provider}
     reply = ""
     last_error = ""
@@ -480,7 +481,7 @@ async def _handle_send_to_character(arguments: dict) -> str:
         while True:
             try:
                 chat_fn = resolve_chat(recipient_provider)
-                result = await chat_fn(all_msgs, recipient_mc, character_name=recipient)
+                result = await chat_fn(all_msgs, recipient_ipu_config, character_name=recipient)
                 reply = ""
                 for msg in reversed(result.messages):
                     if msg.get("role") == "assistant" and msg.get("content"):
@@ -490,33 +491,33 @@ async def _handle_send_to_character(arguments: dict) -> str:
             except Exception as e:
                 last_error = f"{type(e).__name__}: {e}"
                 _logger.error(
-                    f"  [send_to_character] {recipient} @ {recipient_provider}/{recipient_model_short} 调用失败: {last_error}")
+                    f"  [send_to_character] {recipient} @ {recipient_provider}/{recipient_ipu_short} 调用失败: {last_error}")
                 # 尝试切换到其他供应商
                 available = [p for p in _list_prov() if p not in tried_providers]
                 if not available:
-                    reply = f"[Error] 调用 {recipient} 的 LLM 失败 ({recipient_provider}/{recipient_model_short}): {last_error}"
+                    reply = f"[Error] 调用 {recipient} 的 LLM 失败 ({recipient_provider}/{recipient_ipu_short}): {last_error}"
                     break
                 old_provider = recipient_provider
-                old_model = recipient_model_short
+                old_model = recipient_ipu_short
                 recipient_provider = available[0]
-                recipient_model_short = next(iter(_MN.get(recipient_provider, {}).keys()), "v4-flash")
-                from actor_config import resolve_model as _rm2
+                recipient_ipu_short = next(iter(_MN.get(recipient_provider, {}).keys()), "v4-flash")
+                from yinao import resolve_ipu as _rm2
                 try:
-                    _, recipient_mc = _rm2(recipient_provider, recipient_model_short)
+                    _, recipient_ipu_config = _rm2(recipient_provider, recipient_ipu_short)
                 except KeyError as ke:
                     reply = f"[Error] 无法为 {recipient} 找到可用引擎: {ke}"
                     break
                 # 同步新引擎运行时配置
-                sync_config_to_model(recipient_config, recipient_mc)
+                sync_config_to_ipu(recipient_config, recipient_ipu_config)
                 # 重建系统消息：反映实际运行引擎（非配置的旧引擎）
                 all_msgs[0] = build_system_message(recipient_config, recipient)
                 tried_providers.add(recipient_provider)
                 engine_fallback_note = (
-                    f"\n⚠️ 引擎降级：{old_provider}/{old_model} → {recipient_provider}/{recipient_model_short}"
+                    f"\n⚠️ 引擎降级：{old_provider}/{old_model} → {recipient_provider}/{recipient_ipu_short}"
                     f"（原因: {last_error}）"
                 )
                 _logger.info(
-                    f"  [send_to_character] 自动切换 {recipient} → {recipient_provider}/{recipient_model_short}")
+                    f"  [send_to_character] 自动切换 {recipient} → {recipient_provider}/{recipient_ipu_short}")
     finally:
         set_actor(_prev_actor)  # 恢复 _current_actor
         _set_dn(_prev_actor)  # 恢复终端显示名
@@ -538,7 +539,7 @@ async def _handle_send_to_character(arguments: dict) -> str:
     return (
         f"🔔 {recipient} 无法看到你的普通回复——继续对话请调用 send_to_character\n\n"
         f"[来自 {recipient} 的回复]\n\n{reply}\n\n"
-        f"(引擎: {recipient_provider}/{recipient_model_short}，"
+        f"(引擎: {recipient_provider}/{recipient_ipu_short}，"
         f"共 {len(reply)} 字)"
         f"{engine_fallback_note}"
     )
@@ -747,7 +748,7 @@ async def _read_file(path: str, line_range: str | None = None) -> str:
             return (
                 f"[提示] {path} 是图片文件，不要用 read_file 读取。"
                 f"如果你有 vision 能力，请直接要求用户发送图片给你看；"
-                f"如果没有 vision，请用 update_runtime 切换到 vision 模型。"
+                f"如果没有 vision，请用 update_runtime 切换到 vision 智能基元。"
             )
         content = resolved.read_text(encoding="utf-8", errors="replace")
         if line_range:
@@ -888,19 +889,19 @@ def _ensure_tools():
     if not _tools_built:
         # 动态获取可用模型
         try:
-            import actor_config.model_resolver as mr
-            providers_desc = ", ".join(mr.MODEL_NAMES.keys())
+            import yinao.ipu_resolver as mr
+            providers_desc = ", ".join(mr.IPU_REGISTRY.keys())
             models_by_provider = []
-            for p, ms in mr.MODEL_NAMES.items():
+            for p, ms in mr.IPU_REGISTRY.items():
                 models_by_provider.append(f"{p}: {', '.join(ms.keys())}")
             model_list_explicit = []
-            for p, ms in mr.MODEL_NAMES.items():
+            for p, ms in mr.IPU_REGISTRY.items():
                 for short_name in ms.keys():
                     model_list_explicit.append(f"{short_name}")
             runtime_desc = (
                 f"update runtime params. Any combination is supported. "
-                f"model: short name ONLY. Available: {', '.join(model_list_explicit)}. "
-                f"temperature: 0-2. top_p: 0-1. max_tokens: positive int. "
+                f"ipu: short name ONLY. Available: {', '.join(model_list_explicit)}. "
+                f"temperature: 0-2. top_p: 0-1. max_icp: positive int. "
                 f"thinking_mode: enabled/disabled/auto. "
                 f"reasoning_effort: high/max (需 thinking_enabled=true，否则自动开启 thinking)。 "
                 f"thinking_enabled: true/false (关 thinking 时自动清除 reasoning_effort；"
@@ -912,8 +913,8 @@ def _ensure_tools():
                 "max_iterations: max reasoning iterations (positive int)."
             )
         except Exception:
-            runtime_desc = "update runtime params: model, temperature, top_p, max_tokens, thinking_mode"
-            identity_desc = "update identity: system_prompt, role, description, max_iterations"
+            runtime_desc = "update runtime params: ipu, temperature, top_p, max_icp, thinking_mode"
+            identity_desc = "update identity: system_prompt, title, traits, max_iterations"
         FILE_TOOLS = [
             ToolDef(
                 name="read_file",
@@ -997,10 +998,10 @@ def _ensure_tools():
                 parameters={
                     "type": "object",
                     "properties": {
-                        "model": {"type": "string"},
+                        "ipu": {"type": "string"},
                         "temperature": {"type": "number"},
                         "top_p": {"type": "number"},
-                        "max_tokens": {"type": "integer"},
+                        "max_icp": {"type": "integer"},
                         "thinking_mode": {"type": "string"},
                         "reasoning_effort": {"type": "string"},
                         "thinking_enabled": {"type": "boolean"},
@@ -1029,7 +1030,7 @@ def _ensure_tools():
                 name="summarize_conversation",
                 description=(
                     "将较早的对话历史压缩为摘要，节省上下文。"
-                    "当 token 消耗过高或话题自然切换时主动调用。"
+                    "当智点（ICP）消耗过高或话题自然切换时主动调用。"
                     "keep_recent_turns: 保留最近 N 轮原文不压缩（默认 6）。"
                     "topic: 摘要主题（可选，留空自动推断）。"
                     "压缩后的摘要下轮自动注入上下文。"
@@ -1050,7 +1051,7 @@ def _ensure_tools():
                 description=(
                     "创建新角色。name: 角色名称，system_prompt: 核心人格定义，"
                     "title: 头衔（可选），traits: 特质描述（可选），"
-                    "model: 模型短名（可选），provider: 供应商（可选），"
+                    "ipu: 智能基元短名（可选），provider: 供应商（可选），"
                     "temperature: 0-2（可选），top_p: 0-1（可选），"
                     "thinking_enabled: true/false（可选，默认 true），"
                     "reasoning_effort: high/max（可选，默认 high）。"
@@ -1063,11 +1064,11 @@ def _ensure_tools():
                         "system_prompt": {"type": "string"},
                         "title": {"type": "string"},
                         "traits": {"type": "string"},
-                        "model": {"type": "string"},
+                        "ipu": {"type": "string"},
                         "provider": {"type": "string"},
                         "temperature": {"type": "number"},
                         "top_p": {"type": "number"},
-                        "max_tokens": {"type": "integer"},
+                        "max_icp": {"type": "integer"},
                         "thinking_enabled": {"type": "boolean"},
                         "thinking_mode": {"type": "string"},
                         "reasoning_effort": {"type": "string"},
@@ -1078,7 +1079,7 @@ def _ensure_tools():
             ),
             ToolDef(
                 name="list_characters",
-                description="列出所有已注册角色及其模型和描述",
+                description="列出所有已注册角色及其智能基元和描述",
                 parameters={
                     "type": "object",
                     "properties": {},

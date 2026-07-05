@@ -6,21 +6,20 @@ test_config_io.py — 配置读写完整链路测试
   - 使用真实的 character_data/ 目录，不 mock
   - 验证生成的文件内容，不是只靠返回值
 """
-import sys
-import os
 import json
+import os
 import shutil
+import sys
 from pathlib import Path
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
-from data_shape import ActorConfig, IdentityConfig, RuntimeConfig
-from actor_config.config_io import (
+from data_shape import ActorConfig, RoleConfig, IPURuntime
+from character.config_io import (
     load_config, save_config, init_config,
     config_to_dict, config_from_dict,
 )
-
 
 TEST_CHAR = "_test_io"
 
@@ -46,14 +45,14 @@ def teardown():
 def test_config_to_dict():
     """序列化：ActorConfig → dict 完整性。"""
     config = ActorConfig(
-        identity=IdentityConfig(
+        identity=RoleConfig(
             system_prompt="测试用助手。",
             title="测试员",
             traits="擅长边界条件",
         ),
-        runtime=RuntimeConfig(
+        runtime=IPURuntime(
             provider="deepseek",
-            model="v4",
+            ipu="v4",
             temperature=0.5,
         ),
     )
@@ -62,7 +61,7 @@ def test_config_to_dict():
     assert d["identity"]["title"] == "测试员"
     assert d["identity"]["traits"] == "擅长边界条件"
     assert d["runtime"]["provider"] == "deepseek"
-    assert d["runtime"]["model"] == "v4"
+    assert d["runtime"]["ipu"] == "v4"
     assert d["runtime"]["temperature"] == 0.5
     print("  [OK] config_to_dict: 序列化正常")
 
@@ -70,17 +69,17 @@ def test_config_to_dict():
 def test_config_roundtrip():
     """往返：ActorConfig → dict → ActorConfig 无损。"""
     original = ActorConfig(
-        identity=IdentityConfig(
+        identity=RoleConfig(
             system_prompt="往返测试。",
             title="测试者",
             traits="细致",
             max_iterations=5,
         ),
-        runtime=RuntimeConfig(
+        runtime=IPURuntime(
             provider="minimax",
-            model="2.7",
+            ipu="2.7",
             temperature=0.8,
-            max_tokens=4096,
+            max_icp=4096,
         ),
     )
     d = config_to_dict(original)
@@ -90,7 +89,7 @@ def test_config_roundtrip():
     assert restored.identity.traits == original.identity.traits
     assert restored.identity.max_iterations == original.identity.max_iterations
     assert restored.runtime.provider == original.runtime.provider
-    assert restored.runtime.model == original.runtime.model
+    assert restored.runtime.ipu == original.runtime.ipu
     assert restored.runtime.temperature == original.runtime.temperature
     print("  [OK] config_roundtrip: dict 往返无损")
 
@@ -98,13 +97,13 @@ def test_config_roundtrip():
 def test_save_and_load():
     """真实 I/O：save → 文件检查 → load。"""
     config = ActorConfig(
-        identity=IdentityConfig(
+        identity=RoleConfig(
             system_prompt="I/O 测试助手。",
             title="文件员",
         ),
-        runtime=RuntimeConfig(
+        runtime=IPURuntime(
             provider="dashscope",
-            model="qwq",
+            ipu="qwq",
         ),
     )
     save_config(config, TEST_CHAR)
@@ -130,7 +129,7 @@ def test_save_and_load():
     assert loaded.identity.title == "文件员"
     assert loaded.identity.system_prompt == "I/O 测试助手。"
     assert loaded.runtime.provider == "dashscope"
-    assert loaded.runtime.model == "qwq"
+    assert loaded.runtime.ipu == "qwq"
     print("  [OK] load_config: 从文件加载正确")
 
 
@@ -149,7 +148,7 @@ def test_init_config_new():
         assert config.identity.system_prompt == "智能体项目测试助手。", \
             f"默认 system_prompt 不符: {config.identity.system_prompt}"
         assert config.runtime.provider == "minimax"
-        assert config.runtime.model == "2.7"
+        assert config.runtime.ipu == "2.7"
 
         # 确认文件已创建（init_config 对新建角色使用时间戳前缀目录）
         found = list(char_root.glob(f"*-{name}/config.json"))
@@ -176,15 +175,15 @@ def test_init_config_existing():
     try:
         # 先创建自定义配置（先用 registry 创建目录）
         config = ActorConfig(
-            identity=IdentityConfig(system_prompt="已存在的配置。", title="老角色"),
-            runtime=RuntimeConfig(model="custom-model"),
+            identity=RoleConfig(system_prompt="已存在的配置。", title="老角色"),
+            runtime=IPURuntime(ipu="custom-model"),
         )
         save_config(config, name)
 
         # 再 init_config
         loaded = init_config(name)
         assert loaded.identity.title == "老角色", "不应覆盖已有配置"
-        assert loaded.runtime.model == "custom-model"
+        assert loaded.runtime.ipu == "custom-model"
         print("  [OK] init_config: 已有角色不覆盖")
     finally:
         for pattern in [f"*-{name}", name]:
@@ -201,9 +200,8 @@ if __name__ == "__main__":
         test_save_and_load()
         test_init_config_new()
         test_init_config_existing()
-        print("\n" + "="*50)
+        print("\n" + "=" * 50)
         print("  [OK] 配置读写: 全部 5 项测试通过")
-        print("="*50)
+        print("=" * 50)
     finally:
         teardown()
-

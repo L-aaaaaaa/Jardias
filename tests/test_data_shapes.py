@@ -3,36 +3,36 @@ test_data_shapes.py — 数据形状验证测试
 
 验证所有 data_shape 类型的字段、默认值、实例化正确性。
 """
-import sys
 import os
+import sys
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
 from data_shape.agent_config import (
-    RuntimeConfig, IdentityConfig, ActorConfig,
-    ModelEntry, ProviderConfig, ConfigFile,
+    IPURuntime, RoleConfig, ActorConfig,
+    IPUEntry, IPUProviderConfig, IPUConfigFile,
 )
 from data_shape.character import L1Summary
-from data_shape.model_client import (
-    AIModelConfig, AIModelProvider, ToolCall,
-    RoundOutput, ChatResult, RoundMeta, ModelSwitch,
+from data_shape.ipu_client import (
+    IPUConfig, ToolCall,
+    RoundOutput, ChatResult, RoundMeta, IPUSwitch,
 )
 from data_shape.tool import ToolDef, ToolParam
 
 
 def test_runtime_config_defaults():
-    rc = RuntimeConfig()
+    rc = IPURuntime()
     assert rc.provider == "minimax"
-    assert rc.model == "2.7"
+    assert rc.ipu == "2.7"
     assert rc.temperature == 1.0
-    assert rc.max_tokens == 8192
+    assert rc.max_icp == 8192
     assert rc.thinking_mode == "auto"
-    print("  [OK] RuntimeConfig: 默认值正确")
+    print("  [OK] IPURuntime: 默认值正确")
 
 
 def test_identity_config():
-    ic = IdentityConfig(
+    ic = RoleConfig(
         system_prompt="自定义提示词",
         title="分析师",
         traits="擅长数据",
@@ -41,55 +41,55 @@ def test_identity_config():
     assert ic.system_prompt == "自定义提示词"
     assert ic.title == "分析师"
     assert ic.max_iterations == 20
-    print("  [OK] IdentityConfig: 字段赋值正确")
+    print("  [OK] RoleConfig: 字段赋值正确")
 
 
 def test_actor_config_composition():
     ac = ActorConfig(
-        identity=IdentityConfig(system_prompt="组合测试"),
-        runtime=RuntimeConfig(temperature=0.5),
+        identity=RoleConfig(system_prompt="组合测试"),
+        runtime=IPURuntime(temperature=0.5),
     )
     assert ac.identity.system_prompt == "组合测试"
     assert ac.runtime.temperature == 0.5
     print("  [OK] ActorConfig: 组合正确")
 
 
-def test_model_entry():
-    me = ModelEntry(id="deepseek-v4", caps=["thinking", "long_context"])
+def test_ipu_entry():
+    me = IPUEntry(id="deepseek-v4", caps=["thinking", "long_context"])
     assert me.id == "deepseek-v4"
     assert "thinking" in me.caps
-    print("  [OK] ModelEntry: pydantic 模型正常")
+    print("  [OK] IPUEntry: pydantic 类型正常")
 
 
 def test_provider_config():
-    pc = ProviderConfig(
+    pc = IPUProviderConfig(
         name="deepseek",
         api_key_env="DEEPSEEK_API_KEY",
         base_url="https://api.deepseek.com/v1",
-        models={"v4": {"id": "deepseek-chat"}},
+        ipus={"v4-flash": {"id": "deepseek-chat"}},
     )
     assert pc.name == "deepseek"
     assert pc.base_url == "https://api.deepseek.com/v1"
-    assert pc.models["v4"]["id"] == "deepseek-chat"
-    print("  [OK] ProviderConfig: pydantic 模型正常")
+    assert pc.ipus["v4-flash"]["id"] == "deepseek-chat"
+    print("  [OK] IPUProviderConfig: pydantic 类型正常")
 
 
 def test_config_file():
-    cf = ConfigFile(
+    cf = IPUConfigFile(
         version=1,
         providers=[
-            ProviderConfig(
+            IPUProviderConfig(
                 name="minimax",
                 api_key_env="MINIMAX_API_KEY",
                 base_url="https://api.minimax.chat/v1",
-                models={"2.7快": {"id": "MiniMax-M2.7"}},
+                ipus={"2.7快": {"id": "MiniMax-M2.7"}},
             )
         ],
     )
     assert cf.version == 1
     assert len(cf.providers) == 1
     assert cf.providers[0].name == "minimax"
-    print("  [OK] ConfigFile: 嵌套 pydantic 正常")
+    print("  [OK] IPUConfigFile: 嵌套 pydantic 正常")
 
 
 def test_l1_summary():
@@ -107,18 +107,18 @@ def test_l1_summary():
     print("  [OK] L1Summary: dataclass 字段正确")
 
 
-def test_aimodel_config():
-    cfg = AIModelConfig(
-        model="test-model",
+def test_ipu_config():
+    cfg = IPUConfig(
+        ipu="test-model",
         base_url="https://test.api/v1",
         temperature=0.7,
-        max_completion_tokens=1024,
+        max_icp=1024,
     )
-    assert cfg.model == "test-model"
+    assert cfg.ipu == "test-model"
     assert cfg.temperature == 0.7
-    assert cfg.max_completion_tokens == 1024
+    assert cfg.max_icp == 1024
     assert cfg.stream is True
-    print("  [OK] AIModelConfig: pydantic 模型 + 默认值正确")
+    print("  [OK] IPUConfig: pydantic 类型 + 默认值正确")
 
 
 def test_round_output():
@@ -150,9 +150,9 @@ def test_round_meta():
 
 
 def test_model_switch():
-    ms = ModelSwitch(provider="deepseek", model="v4")
+    ms = IPUSwitch(provider="deepseek", ipu="v4")
     assert ms.provider == "deepseek"
-    print("  [OK] ModelSwitch: 正确")
+    print("  [OK] IPUSwitch: 正确")
 
 
 def test_tool_def():
@@ -167,17 +167,16 @@ if __name__ == "__main__":
     test_runtime_config_defaults()
     test_identity_config()
     test_actor_config_composition()
-    test_model_entry()
+    test_ipu_entry()
     test_provider_config()
     test_config_file()
     test_l1_summary()
-    test_aimodel_config()
+    test_ipu_config()
     test_round_output()
     test_chat_result()
     test_round_meta()
     test_model_switch()
     test_tool_def()
-    print("\n" + "="*50)
+    print("\n" + "=" * 50)
     print("  [OK] 数据形状: 全部 13 项测试通过")
-    print("="*50)
-
+    print("=" * 50)
