@@ -255,7 +255,7 @@ def _get_pending_triggers(ctx) -> list[str]:
                 if n.isdigit():
                     skipped_indices.add(int(n))
 
-        pm = _re_module.search(r'第\s*(\d+)\s*/\s*(\d+)\s*个(?=\s*[\]|｜\|])', header)
+        pm = _re_module.search(r'第\s*(\d+)\s*/\s*(\d+)\s*个', header)
         if pm:
             all_positions.append(int(pm.group(1)))
             all_totals.append(int(pm.group(2)))
@@ -270,7 +270,7 @@ def _get_pending_triggers(ctx) -> list[str]:
     # 聚合 miss 信息
     if skipped_indices:
         skipped_sorted = sorted(skipped_indices)
-        missed_str = "，错过 " + ", ".join(f"#{n}未补" for n in skipped_sorted)
+        missed_str = "，错过  " + ",  ".join(f"#{n}未补" for n in skipped_sorted)
     elif pending:
         missed_str = "，错过 0 项任务"
     else:
@@ -284,9 +284,13 @@ def _get_pending_triggers(ctx) -> list[str]:
     else:
         pos_str = "位置未知"
 
+    # 把 desc 里的 {N} 占位符替换为实际位置（pos_str），确保日志和消息里显示具体数字
+    if "{N}" in desc:
+        desc = desc.replace("{N}", pos_str.lstrip("#").split("-")[0])
+
     count = len(pending)
     detail = f"（{pos_str}，延迟 {max_late_sec}s{missed_str}，剩余 {last_remaining}项）"
-    return [f"{detail}\n 本次行动：{desc}（共 {count} 条待处理）"]
+    return [f"{detail}\n{desc}（共 {count} 条待处理）"]
 
 
 def _clear_prompt_line():
@@ -296,11 +300,58 @@ def _clear_prompt_line():
 
 async def _process_triggers(ctx, snapshot: list[str]):
     """处理传入的触发快照（调用方保证锁已释放，避免死锁）。"""
+    time_str = _dt.now().strftime("%H:%M:%S")
+
     for idx, t in enumerate(snapshot):
-        user_input = f"时策任务到期，请执行：{t}"
+        # snapshot 格式：
+        # （#X/Y，延迟 Ns，错过...，剩余 R）
+        #  本次行动：xxx（共 N 条待处理）
+        detail_part = t.split("\n", 1)[0].strip()  # 括号部分
+        body = t.split("\n", 1)[1].strip() if "\n" in t else ""  # 本次行动部分
+
+        # 解析括号里的聚合信息：#X-Y/T（范围）或 #X/T（单条）
+        raw = detail_part.strip().lstrip("（").rstrip("）")
+        range_match = _re_module.search(r"#(\d+)-(\d+)/(\d+)", raw)
+        single_match = _re_module.search(r"#(\d+)/(\d+)", raw)
+        if range_match:
+            pos_str = f"{range_match.group(1)}-{range_match.group(2)}"
+            total_str = range_match.group(3)
+        elif single_match:
+            pos_str = single_match.group(1)
+            total_str = single_match.group(2)
+        else:
+            pos_str = "?"
+            total_str = "?"
+        late_match = _re_module.search(r"延迟\s*([\d.]+)\s*s", raw)
+        remaining_match = _re_module.search(r"剩余\s*(\d+)", raw)
+
+        # 解析错过项：
+        # 有错过："，错过  #5未补,  #7未补"
+        # 无错过："，错过  0 项任务"
+        missed_parts = _re_module.findall(r"#(\d+)未补", raw)
+        if missed_parts:
+            missed_str = "，错过  " + ",  ".join(f"#{n}未补" for n in missed_parts)
+        elif "，错过  0 项任务" in raw:
+            missed_str = ""  # 0项任务不需要显示
+        else:
+            missed_str = ""
+
+        # 解析 desc：去掉末尾的（共 N 条待处理）
+        desc = body
+        if "（共 " in desc:
+            desc = desc[:desc.find("（共 ")].rstrip()
+
+        late_str = late_match.group(1) if late_match else "0"
+        remaining_str = remaining_match.group(1) if remaining_match else "0"
+
+        user_input = (
+            f"【时策任务触发 {time_str}】本次行动：{desc}\n"
+            f"本次为第 {pos_str} 项 时策任务，共{total_str}项，"
+            f"本次延迟 {late_str}s{missed_str},  剩余 {remaining_str}项"
+        )
 
         _clear_prompt_line()
-        print(f"\n【时策触发 {_dt.now().strftime('%H:%M:%S')}】{user_input}")
+        print(f"\n{user_input}")
         turn_ts = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
         round_ok, messages = await _run_turn(ctx, user_input, None, None, "")
         reply = extract_reply(messages) if round_ok else ""
