@@ -10,8 +10,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 if hasattr(signal, "SIGINT"):
     signal.signal(signal.SIGINT, lambda sig, frame: sys.exit(0))
 
-from common import bootstrap, conversation_loop
-from common.lifecycle import interactive_loop
+from common.bootstrap import bootstrap
+from common.lifecycle import conversation_loop, interactive_loop
 
 
 async def main(provider: str = "minimax", ipu: str = "2.7", character: str = "default"):

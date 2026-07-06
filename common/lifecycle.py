@@ -1,4 +1,4 @@
-﻿"""
+"""
 lifecycle.py — 对话循环：轮次执行、状态收集、历史持久化。
 """
 import asyncio
@@ -7,13 +7,14 @@ import re as _re_module
 import sys
 from datetime import datetime as _dt
 
+from character.config_io import load_config
 from character.summarizer import check_and_compress
 from common.actor_log import turn_open, model_switch as log_model_switch
 from common.context import form_full_context
 from common.logger import logger
 from common.utils import set_display_name
+
 from tool.builtin import tools, clear_pending_switch
-from character.config_io import load_config
 from yinao import resolve_ipu
 from yinao.ipu_client import resolve_chat, sync_config_to_ipu, reload_after_switch, make_switch_note, \
     _next_provider, _pick_fallback_ipu, _next_vision_provider
@@ -70,7 +71,8 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
             if is_exhausted_error(e):
                 record_ipu_failure(ctx.provider, e)
             need_vision = bool(image_url)
-            fallback = _next_vision_provider(ctx.provider, tried) if need_vision else _next_provider(ctx.provider, tried)
+            fallback = _next_vision_provider(ctx.provider, tried) if need_vision else _next_provider(ctx.provider,
+                tried)
             if fallback:
                 old_prov, old_ipu = ctx.provider, ctx.ipu
                 tried.add(fallback)
@@ -182,9 +184,9 @@ def _build_trigger_message(ctx) -> str:
             break
         if m.get("role") == "system_trigger":
             pending.append(m)
-    skipped = len(pending) - 1
+    skipped = len(pending)
     if skipped > 0:
-        return f"时策任务到期，请执行：{desc}（前面已有 {skipped} 个任务过期，本次是第 {skipped + 1} 个）"
+        return f"时策任务到期，请执行：{desc}（前面已有 {skipped - 1} 个任务过期，本次是第 {skipped} 个）"
     return f"时策任务到期，请执行：{desc}"
 
 
@@ -195,48 +197,96 @@ def _format_trigger_display(user_input: str) -> str:
 
 
 def _get_pending_triggers(ctx) -> list[str]:
-    ctx.history.load()
+    """返回触发描述列表.
+
+    所有统计仅限当前会话批次（最后一条非时策用户消息之后），不与历史会话混算。
+    """
     msgs = ctx.history.messages
-    processed = 0
-    total = sum(1 for m in msgs if m.get("role") == "system_trigger")
-    for i, m in enumerate(msgs):
-        if m.get("role") == "system_trigger":
-            if any(msgs[j].get("role") == "assistant" and msgs[j].get("content")
-                   for j in range(i + 1, len(msgs))):
-                processed += 1
-    pending = []
-    for m in reversed(msgs):
-        if m.get("role") == "system_trigger":
-            pending.append(m)
-        elif m.get("role") == "assistant" and m.get("content"):
+
+    # ── 找当前批次起点：最后一条非「时策任务到期」的真实用户消息 ──
+    batch_start = 0
+    for i in range(len(msgs) - 1, -1, -1):
+        m = msgs[i]
+        if m.get("role") == "user" and not m.get("content", "").startswith("时策任务到期"):
+            batch_start = i
             break
-        elif m.get("role") == "user":
-            if not m.get("content", "").startswith("时策任务到期"):
-                break
+
+    batch = msgs[batch_start:]
+
+    # ── 找当前批次内所有未处理的触发器（只扫描当前批次，防止跨批次污染位置信息） ──
+    pending = []
+    for i, m in enumerate(batch):
+        if m.get("role") == "system_trigger":
+            has_response = any(
+                batch[j].get("role") == "assistant" and batch[j].get("content")
+                for j in range(i + 1, len(batch))
+            )
+            if not has_response:
+                pending.append(m)
+
     if not pending:
         return []
-    missed_before = len(pending) - 1
-    result = []
-    for m in reversed(pending):
+
+    # ── 聚合所有 pending triggers，生成一条完整的状态视图 ──
+    # 机械性统计由代码完成，LLM 只做语义判断
+    max_late_sec = 0
+    skipped_indices: set[int] = set()
+    all_positions: list[int] = []
+    all_totals: list[int] = []
+    last_remaining = ""
+    desc = ""
+
+    for m in pending:
         content = m.get("content", "")
-        if "\n" in content:
-            parts = content.split("\n", 1)
-            header = parts[0].strip()
+        if "\n" not in content:
+            continue
+        parts = content.split("\n", 1)
+        header = parts[0].strip()
+
+        lm = _re_module.search(r'延迟\s*(\d+)\s*s', header)
+        if lm:
+            max_late_sec = max(max_late_sec, int(lm.group(1)))
+
+        sm = _re_module.search(r'错过:\s*(#?[\d, #]+)', header)
+        if sm:
+            nums = sm.group(1).strip().strip("#").replace("#", "")
+            for n in nums.split(","):
+                n = n.strip()
+                if n.isdigit():
+                    skipped_indices.add(int(n))
+
+        pm = _re_module.search(r'第\s*(\d+)\s*/\s*(\d+)\s*个(?=\s*[\]|｜\|])', header)
+        if pm:
+            all_positions.append(int(pm.group(1)))
+            all_totals.append(int(pm.group(2)))
+
+        rm = _re_module.search(r"剩余\s*(\d+)", header)
+        if rm:
+            last_remaining = rm.group(1)
+
+        if not desc:
             desc = parts[1].strip()
-            lm = _re_module.search(r'已延迟\s*(\d+)\s*秒', header)
-            late_sec = int(lm.group(1)) if lm else 0
-        else:
-            desc = content.strip()
-            late_sec = 0
-        pos = processed + len(result) + 1
-        detail = f"（#{pos}"
-        if late_sec > 0:
-            detail += f"，延迟 {late_sec}s"
-        if missed_before > 0 and len(result) == 0:
-            detail += f"，前 {missed_before} 个错过"
-        detail += "）"
-        result.append(f"{desc}{detail}")
-    return result
+
+    # 聚合 miss 信息
+    if skipped_indices:
+        skipped_sorted = sorted(skipped_indices)
+        missed_str = "，错过 " + ", ".join(f"#{n}未补" for n in skipped_sorted)
+    elif pending:
+        missed_str = "，错过 0 项任务"
+    else:
+        missed_str = ""
+
+    # 聚合位置信息：直接取 header 里的原始任务总数（M），取最大保持一致
+    if all_positions and all_totals:
+        first_pos, last_pos = min(all_positions), max(all_positions)
+        total = max(all_totals)
+        pos_str = f"#{first_pos}-{last_pos}/{total}" if first_pos != last_pos else f"#{first_pos}/{total}"
+    else:
+        pos_str = "位置未知"
+
+    count = len(pending)
+    detail = f"（{pos_str}，延迟 {max_late_sec}s{missed_str}，剩余 {last_remaining}项）"
+    return [f"{detail}\n 本次行动：{desc}（共 {count} 条待处理）"]
 
 
 def _clear_prompt_line():
@@ -244,85 +294,80 @@ def _clear_prompt_line():
     sys.stdout.flush()
 
 
-async def _process_triggers(ctx):
-    triggers = _get_pending_triggers(ctx)
-    if not triggers:
-        return
-    if len(triggers) == 1:
-        user_input = "时策任务到期，请执行：" + triggers[0]
-    else:
-        lines = ["以下时策任务均已到期。请先用 shice_schedule_list 检查当前状态，判断累计错过次数是否≥3。"
-                 "若≥3：取消所有剩余任务，以新间隔重新注册。若<3：直接执行以下各任务：", ""]
-        for i, t in enumerate(triggers):
-            lines.append(f"{i + 1}. {t}")
-        user_input = "\n".join(lines)
-    _clear_prompt_line()
-    if len(triggers) > 1:
-        print(f"\n[时策触发 {_dt.now().strftime('%H:%M:%S')}] 共 {len(triggers)} 个任务到期")
-    else:
-        print(f"\n[时策触发 {_dt.now().strftime('%H:%M:%S')}] {triggers[0][:60]}")
-    turn_ts = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
-    round_ok, messages = await _run_turn(ctx, user_input, None, None, "")
-    reply = extract_reply(messages) if round_ok else ""
-    if reply:
-        ctx.history.append_assistant(reply)
-        ctx.history.save()
-        ctx.config = load_config(ctx.character_name, config_dir=ctx.config_dir)
-        sync_config_to_ipu(ctx.config, ctx.ipu_config)
-        ctx.turn_num += 1
+async def _process_triggers(ctx, snapshot: list[str]):
+    """处理传入的触发快照（调用方保证锁已释放，避免死锁）。"""
+    for idx, t in enumerate(snapshot):
+        user_input = f"时策任务到期，请执行：{t}"
+
+        _clear_prompt_line()
+        print(f"\n【时策触发 {_dt.now().strftime('%H:%M:%S')}】{user_input}")
+        turn_ts = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+        round_ok, messages = await _run_turn(ctx, user_input, None, None, "")
+        reply = extract_reply(messages) if round_ok else ""
+        if reply:
+            ctx.history.append_assistant(reply)
+            ctx.history.save()
+            ctx.config = load_config(ctx.character_name, config_dir=ctx.config_dir)
+            sync_config_to_ipu(ctx.config, ctx.ipu_config)
+            ctx.turn_num += 1
 
 
 async def conversation_loop(ctx, allow_switch: bool = False):
     round_context = ""
     stdin_queue: asyncio.Queue = asyncio.Queue()
+    _stdin_ready = asyncio.Event()
+    _stdin_ready.set()  # 首次允许读取
 
     async def _stdin_reader():
         while True:
-            line = await asyncio.to_thread(sys.stdin.readline)
-            await stdin_queue.put(line.rstrip("\n"))
+            await _stdin_ready.wait()
+            line = await asyncio.to_thread(input, "# 【用户输入】：")
+            _stdin_ready.clear()
+            await stdin_queue.put(line)
 
     reader_task = asyncio.create_task(_stdin_reader())
     try:
         while True:
             triggers = _get_pending_triggers(ctx)
             if triggers:
-                await _process_triggers(ctx)
+                # 处理当前快照批次
+                await _process_triggers(ctx, triggers)
                 continue
 
             try:
-                user_input = await asyncio.wait_for(stdin_queue.get(), timeout=0.1)
+                user_words = await asyncio.wait_for(stdin_queue.get(), timeout=0.1)
             except asyncio.TimeoutError:
                 continue
 
             t_now = _dt.now().strftime("%H:%M:%S")
-            print(f"\n（发送时间：{t_now}）")
+            print(f"（发送时间：{t_now}）")
             from common.actor_log import turn_input
-            turn_input(user_input)
+            turn_input(user_words)
 
-            if not user_input.strip():
+            if not user_words.strip():
                 continue
 
-            if user_input.strip().lower() in ("exit", "quit", "q"):
+            if user_words.strip().lower() in ("exit", "quit", "q"):
                 ctx.history.save()
                 break
-            if allow_switch and user_input.strip().lower() == "switch":
+            if allow_switch and user_words.strip().lower() == "switch":
                 ctx.history.save()
                 return "switch"
 
-            routed = await _handle_directive(user_input, ctx)
+            routed = await _handle_directive(user_words, ctx)
             if routed is not None:
                 if routed == "":
                     continue
-                user_input = routed
+                user_words = routed
 
             turn_open(ctx.turn_num, ctx.config.runtime.provider, ctx.config.runtime.ipu, ctx.ipu_config.ipu,
                 runtime=ctx.config.runtime, tool_defs=tools.get_definitions())
 
             from media.image import detect_image_url, detect_local_image, local_image_to_data_url, \
                 auto_switch_for_vision
-            image_url = detect_image_url(user_input)
+            image_url = detect_image_url(user_words)
             if not image_url:
-                local_path = detect_local_image(user_input)
+                local_path = detect_local_image(user_words)
                 if local_path:
                     image_url = local_image_to_data_url(local_path)
                     if image_url:
@@ -339,9 +384,10 @@ async def conversation_loop(ctx, allow_switch: bool = False):
                         reason="auto-switch for image understanding")
 
             turn_ts = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
-            round_ok, messages = await _run_turn(ctx, user_input, image_url, switch_note, round_context)
+            round_ok, messages = await _run_turn(ctx, user_words, image_url, switch_note, round_context)
             round_context = _collect_round_meta(round_ok, ctx)
-            await _post_round_async(ctx, user_input, messages, round_ok, ts=turn_ts)
+            await _post_round_async(ctx, user_words, messages, round_ok, ts=turn_ts)
+            _stdin_ready.set()
 
             next_character = clear_pending_switch()
             if next_character:

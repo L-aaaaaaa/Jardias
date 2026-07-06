@@ -51,15 +51,15 @@ def _build_shice_guide() -> str:
     if "shice_schedule_add" not in names:
         return ""
     return (
-        "### 时策（定时任务）\n"
+        "### 时策（时间策略，一种自研定时任务架构，语义理解代替cron表达式）\n"
         "规则：\n"
-        "1. shice_schedule_add 一次传入所有时间戳，绝不拆成多次调用。\n"
-        "2. 触发时收到的「时策任务到期」消息，直接执行任务内容（说单词就说单词），不要分析延迟、不要查状态、不要调其他工具。\n"
-        "3. 只有收到批量触发（「共 N 个任务到期」）时才用 shice_schedule_list 查状态，判断是否需要重调度。不要用 write_file 记录状态。\n"
-        "4. 任务描述（message）写清楚要做什么，如「说一个随机单词」「提醒用户喝水」。不要只写一个词。\n"
-        "工具：shice_schedule_add 注册、shice_schedule_list 查看、shice_schedule_cancel 取消。\n"
+        "工具：shice_schedule_add 注册、shice_schedule_cancel 取消、shice_schedule_list 查看。\n"
         "若需调整间隔或修改已注册任务，用 cancel 取消旧任务 + add 重新注册新任务。\n"
-        "示例场景：「如果累计错过3次，剩下的改为间隔10秒」→ 先全部注册，触发时批量检测错过次数，达到条件就 cancel 剩余任务 + add 重新以10秒间隔注册。\n\n"
+        "触发时如果 head 中有「错过: #N」（如「错过: #2, #3, #4」），"
+        "表示这些任务被跳过、尚未执行，你在本次回复中一并补偿。\n"
+        "任务描述（message）写清楚要做什么，如「提醒用户喝水」「说一个随机单词」。\n"
+        "shice_schedule_add 一次传入所有当前可以推算出的时间戳，不要拆成多次调用。\n"
+        "用户描述的时间如果存在歧义，应该主动询问，没有歧义则果断推进\n"
     )
 
 

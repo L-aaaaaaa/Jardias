@@ -259,20 +259,16 @@ def _setup_scheduler(ctx):
     from tool.builtin import set_scheduler as _set_tool_scheduler
 
     store_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "character_data", "_schedules")
+        "schedule")
     os.makedirs(store_dir, exist_ok=True)
-    store_path = os.path.join(store_dir, "schedules.json")
+    store_path = os.path.join(store_dir, "schedule_data.json")
 
     async def on_job_fire(fire_ctx):
-        """时策触发回调：只写入 trigger 到历史，不调 IPU。"""
-        from character.history import History
-        from character import get_history_path
-
+        """时策触发回调：写入 trigger 到 ctx.history（复用对话循环的 History 实例，避免竞写）。"""
         trigger_msg = fire_ctx.format_trigger()
-        history_path = str(get_history_path(fire_ctx.character_id))
-        hist = History(history_path).load()
-        hist.append_trigger(trigger_msg)
-        hist.save()
+        # 复用对话循环的 History 实例，直接追加到内存中（不 load，避免竞写覆盖）
+        ctx.history.append_trigger(trigger_msg)
+        ctx.history.save()
         logger.info(f"[时策] 触发完成 | {fire_ctx.character_id} | {trigger_msg[:50]}...")
 
     scheduler = TemporalScheduler(store_path, on_job_fire=on_job_fire)

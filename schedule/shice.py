@@ -40,6 +40,7 @@ class JobFireContext:
         character_id: str,
         message: str,
         late_sec: float,
+        skipped_indices: list[int] | None = None,
     ):
         self.job_id = job_id
         self.fire_index = fire_index
@@ -47,16 +48,40 @@ class JobFireContext:
         self.character_id = character_id
         self.message = message
         self.late_sec = late_sec  # 延迟秒数（0 = 准时）
+        self.skipped_indices = skipped_indices or []
 
     @property
     def remaining_count(self) -> int:
         return len(self.timestamps) - self.fire_index - 1
 
     def format_trigger(self) -> str:
-        """格式化 system_trigger 消息。"""
+        """格式化 system_trigger 消息（稳定结构前缀，供 LLM 感知）。
+
+        message 模板支持 {pos}/{total}/{remaining} 占位符，触发时自动替换。
+        不含占位符时，直接拼接在 header 之后。
+        """
+        total = len(self.timestamps)
+        pos = self.fire_index + 1
+        remaining = self.remaining_count
+        skipped_count = len(self.skipped_indices)
+
+        parts = [f"[时策任务 | 第 {pos}/{total} 个"]
         if self.late_sec > 0:
-            return f"[时策任务 | 已延迟 {self.late_sec:.0f} 秒]\n{self.message}"
-        return f"[时策任务]\n{self.message}"
+            parts.append(f" | 延迟 {self.late_sec:.0f}s")
+        if self.skipped_indices:
+            nums = "#" + ", #".join(str(i + 1) for i in self.skipped_indices)
+            parts.append(f" | 错过: {nums}（共 {skipped_count} 个）")
+        parts.append(f" | 剩余 {remaining}")
+        parts.append("]")
+
+        header = "".join(parts)
+
+        # 动态注入占位符（pos/total/remaining 映射到任务序列位置）
+        filled = self.message
+        if "{pos}" in filled or "{total}" in filled or "{remaining}" in filled:
+            filled = filled.replace("{pos}", str(pos)).replace("{total}", str(total)).replace("{remaining}", str(remaining))
+
+        return header + "\n" + filled
 
 
 # ── 辅助 ──
@@ -149,20 +174,88 @@ class TemporalScheduler:
         self, name: str, message: str, timestamps: list[int],
         character_id: str,
     ) -> str:
-        """创建批量定时任务。返回 job_id。"""
+        """创建批量定时任务。返回 job_id。
+
+        如果新时间戳与同一角色的已有 job 时间戳集合有重叠，
+        将重叠部分合并到已有 job 的 _timestamps 中，
+        让同一 job 统一管理所有时间点。
+        """
         if not timestamps:
             return ""
         timestamps = sorted(set(timestamps))
-        job_id = str(uuid.uuid4())[:8]
 
+        # 查找同一角色已有的 job
+        existing_job_id: str | None = None
+        existing_schedules = []
+        for s in self._repo.list():
+            if s.state.get("character_id") == character_id and s.state.get("_job_id"):
+                existing_job_id = s.state["_job_id"]
+                existing_schedules.append(s)
+                break  # 取任意一个即可（同一个 job_id 的所有 schedule 在 _get_job_schedules 里获取）
+
+        if existing_job_id and existing_schedules:
+            existing_ts = set(existing_schedules[0].state.get("_timestamps", []))
+            new_ts = [t for t in timestamps if t not in existing_ts]
+
+            s0 = existing_schedules[0]
+            existing_next_idx = s0.state.get("_next_index", 0)
+
+            # 计算新时间戳集合的起始位置
+            all_ts = sorted(existing_ts | set(new_ts))
+            new_start_idx = 0
+            now = wall_ms()
+            for i, t in enumerate(all_ts):
+                if t > now:
+                    new_start_idx = i
+                    break
+            else:
+                new_start_idx = len(all_ts) - 1
+
+            # 如果新时间戳已全部在已有集合中，或已有 schedule 已推进到
+            # 新时间戳的起始位置之后，则不需要合并。
+            if not new_ts or existing_next_idx > new_start_idx:
+                logger.info(f"[时策] 跳过合并（已有 schedule 已覆盖）: "
+                            f"existing_idx={existing_next_idx}, new_start={new_start_idx}")
+                return existing_job_id
+
+            # 合并时间戳，删除旧 schedule，从第一个未触发的新时间点开始调度
+            merged = sorted(existing_ts | set(new_ts))
+            for s in self._get_job_schedules(existing_job_id):
+                self._repo.remove(s.id)
+            self._job_meta[existing_job_id] = {
+                "name": s0.name,
+                "character_id": character_id,
+                "message": message,
+                "timestamps": merged,
+            }
+            base_state = {
+                "_job_id": existing_job_id,
+                "_timestamps": merged,
+                "character_id": character_id,
+                "message": message,
+                "_total_fired": s0.state.get("_total_fired", 0) or 0,
+                "_skipped_indices": s0.state.get("_skipped_indices", []) or [],
+            }
+            self._create_schedule_at_index(
+                existing_job_id, s0.name, base_state, merged, new_start_idx
+            )
+            if self._running:
+                self._rearm_timer()
+            logger.info(f"[时策] 合并到已有 job {existing_job_id}: "
+                        f"新增 {len(new_ts)} 个，合并后 {len(merged)} 个，"
+                        f"从 idx={new_start_idx} 开始")
+            return existing_job_id
+
+        # 无重叠，创建独立 job
+        job_id = str(uuid.uuid4())[:8]
         self._job_meta[job_id] = {
             "name": name, "character_id": character_id,
             "message": message, "timestamps": timestamps,
         }
-
         base_state = {
             "_job_id": job_id, "_timestamps": timestamps,
             "character_id": character_id, "message": message,
+            "_total_fired": 0,
         }
         self._create_schedule_at_index(job_id, name, base_state, timestamps, 0)
         return job_id
@@ -213,7 +306,7 @@ class TemporalScheduler:
 
         def fire_and_rearm():
             if self._running and seq == self._timer_seq:
-                asyncio.ensure_future(self._on_timer())
+                loop.call_soon(asyncio.ensure_future, self._on_timer())
 
         self._timer_handle = loop.call_later(delay_s, fire_and_rearm)
 
@@ -253,13 +346,17 @@ class TemporalScheduler:
             return
 
         expected_ms = timestamps[idx]
-        late_sec = max(0.0, (wall_ms() - expected_ms) / 1000.0)
+        now = wall_ms()
+        late_sec = max(0.0, (now - expected_ms) / 1000.0)
+
+        skipped_indices = schedule.state.get("_skipped_indices", []) or []
 
         ctx = JobFireContext(
             job_id=job_id, fire_index=idx, timestamps=timestamps,
             character_id=schedule.state.get("character_id", "default"),
             message=schedule.state.get("message", ""),
             late_sec=late_sec,
+            skipped_indices=skipped_indices,
         )
 
         async with self._concurrency:
@@ -269,10 +366,10 @@ class TemporalScheduler:
                 except Exception as e:
                     logger.error(f"[时策] on_job_fire 异常: {e}")
 
-        self._advance_or_terminate(job_id)
+        await self._advance_or_terminate(job_id)
 
-    def _advance_or_terminate(self, job_id: str) -> None:
-        """推进到下一个时间戳，或队列耗尽时终止。"""
+    async def _advance_or_terminate(self, job_id: str) -> None:
+        """推进到下一个未过期时间戳（跳过已过期的则内联触发），或队列耗尽时终止。"""
         schedules = self._get_job_schedules(job_id)
         if not schedules:
             return
@@ -283,6 +380,9 @@ class TemporalScheduler:
             self._repo.remove(s.id)
 
         now = wall_ms()
+        total_fired = (s0.state.get("_total_fired", 0) or 0) + 1  # 本次 fire 完成，+1
+
+        # ── 正常推进 ──
         next_idx = None
         for i in range(idx + 1, len(ts)):
             if ts[i] > now:
@@ -290,14 +390,41 @@ class TemporalScheduler:
                 break
 
         if next_idx is not None:
-            self._create_schedule_at_index(
-                job_id, s0.name,
-                {"_job_id": job_id, "_timestamps": ts,
-                 "character_id": s0.state.get("character_id", "default"),
-                 "message": s0.state.get("message", "")},
-                ts, next_idx,
-            )
+            skipped = list(range(idx + 1, next_idx))
+
+            base_state = {
+                "_job_id": job_id, "_timestamps": ts,
+                "character_id": s0.state.get("character_id", "default"),
+                "message": s0.state.get("message", ""),
+                "_skipped_indices": skipped,
+                "_total_fired": total_fired,
+            }
+            self._create_schedule_at_index(job_id, s0.name, base_state, ts, next_idx)
+
+            # 如果新 schedule 的时间戳已经过期，不走定时器，在当前帧内联触发
+            if ts[next_idx] <= now:
+                new_schedules = self._get_job_schedules(job_id)
+                if new_schedules:
+                    await self._fire(new_schedules[0])
+                    return  # _fire 内部已递归推进/终止，不需要额外清理
         else:
+            # 全部时间戳已过期：把最后一个任务连带所有跳过的索引一起触发
+            # AI 看到后一次性补发全部
+            last_idx = len(ts) - 1
+            if idx < last_idx:
+                all_skipped = list(range(idx + 1, last_idx))
+                base_state = {
+                    "_job_id": job_id, "_timestamps": ts,
+                    "character_id": s0.state.get("character_id", "default"),
+                    "message": s0.state.get("message", ""),
+                    "_skipped_indices": all_skipped,
+                    "_total_fired": total_fired,
+                }
+                self._create_schedule_at_index(job_id, s0.name, base_state, ts, last_idx)
+                new_schedules = self._get_job_schedules(job_id)
+                if new_schedules:
+                    await self._fire(new_schedules[0])
+                    return
             self._job_meta.pop(job_id, None)
 
         self._repo._persist()
