@@ -162,7 +162,7 @@ def _setup_llm_executor(ctx):
                 text = "\n".join(lines[1:]) if len(lines) > 1 else text
                 if text.rstrip().endswith("```"):
                     text = text[:text.rfind("```")].strip()
-            for opener in ("[", "{"):
+            for opener in ("{", "["):  # 找第一个 { 或 [（最外层）
                 idx = text.find(opener)
                 if idx != -1:
                     text = text[idx:]
@@ -173,9 +173,32 @@ def _setup_llm_executor(ctx):
 
         def _repair_json(text: str) -> str:
             import re
+
+            # 1. 去除 markdown code fence
+            text = re.sub(r'^```(?:json)?\s*', '', text, flags=re.MULTILINE)
+            text = re.sub(r'\s*```$', '', text)
+            text = text.strip()
+
+            # 2. 修复 JSON 字符串值中的内嵌换行符（\n 未转义）
+            # 思路：逐字符扫描，维护是否在字符串内状态，忽略转义符 \"
+            in_str = False
+            chars = []
+            for i, ch in enumerate(text):
+                if ch == '"' and (i == 0 or text[i - 1] != '\\'):
+                    in_str = not in_str
+                    chars.append(ch)
+                elif ch == '\n' and in_str:
+                    chars.append(' ')  # 换行替换为空格（保守策略）
+                else:
+                    chars.append(ch)
+            text = ''.join(chars)
+
+            # 3. 去除尾随逗号
             text = re.sub(r',\s*\n\s*([}\]])', r'\n\1', text)
             text = re.sub(r',\s*([}\]])$', r'\1', text, flags=re.MULTILINE)
             text = re.sub(r',(\s*[}\]])', r'\1', text)
+
+            # 4. 平衡括号
             brackets = {"[": "]", "{": "}"}
             stack = []
             balanced = []

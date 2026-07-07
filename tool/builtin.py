@@ -265,7 +265,6 @@ async def _handle_summarize_conversation(arguments: dict) -> str:
     if not messages:
         return "[OK] 历史为空"
 
-    # 按用户消息算轮次，找到截断点
     user_indices = [i for i, m in enumerate(messages) if m["role"] == "user"]
     total_turns = len(user_indices)
     if total_turns <= keep_recent_turns:
@@ -283,6 +282,8 @@ async def _handle_summarize_conversation(arguments: dict) -> str:
 
     now = datetime.now()
     sid = f"L1-{now.strftime('%Y%m%d-%H%M%S')}"
+    abs_from = 0
+    abs_to = cutoff_msg_idx - 1
 
     summary = L1Summary(
         id=sid,
@@ -293,6 +294,8 @@ async def _handle_summarize_conversation(arguments: dict) -> str:
         topic=topic,
         detail=detail,
         key_events=events,
+        msg_indices=(abs_from, abs_to),
+        source="manual",
     )
 
     saved_path = save_l1(_current_actor, summary)
@@ -305,7 +308,105 @@ async def _handle_summarize_conversation(arguments: dict) -> str:
         f"  文件: {saved_path}",
     ]
     _log().info(f"  📦 角色主动摘要 | {user_turns} 轮 → {topic} | {saved_path}")
+
+    # 追加 compression_log
+    from character.summarizer import append_compression_record
+    append_compression_record(
+        character_name=_current_actor,
+        source="summarize_conversation",
+        l1_id=summary.id,
+        abs_from=abs_from,
+        abs_to=abs_to,
+    )
+
     return "\n".join(lines)
+
+
+async def _handle_park_topic(arguments: dict) -> str:
+    """将最近 N 轮对话主动归档为话题摘要。
+    用户指令如「转为摘要」「归档这个话题」时调用。
+    """
+    import json
+    from character import get_history_path
+    from character.summarizer import park_topic as _park_topic
+
+    lookback_turns = int(arguments.get("lookback_turns", 8))
+    topic_hint = arguments.get("topic_hint", "")
+    topic_label = arguments.get("topic_label", "")
+    people_str = arguments.get("people", "")
+    people = [p.strip() for p in people_str.split(",") if p.strip()] if people_str else []
+
+    history_path = get_history_path(_current_actor)
+    if not history_path.exists():
+        return "[Error] 无历史记录"
+
+    with open(history_path, "r", encoding="utf-8") as f:
+        messages: list[dict] = json.load(f)
+
+    try:
+        summary = await _park_topic(
+            character_name=_current_actor,
+            messages=messages,
+            lookback_turns=lookback_turns,
+            topic_hint=topic_hint,
+            topic_label=topic_label,
+            people=people,
+        )
+        label = summary.topic_label or summary.topic or "归档话题"
+        people_str_out = "、".join(summary.people) if summary.people else "无特定人物"
+        return (
+            f"[OK] 话题「{label}」已归档\n"
+            f"  人物: {people_str_out}\n"
+            f"  轮次: {summary.user_turns} 轮\n"
+            f"  时间: {summary.start_time[:19] if summary.start_time else '?'} ~ "
+            f"{summary.end_time[:19] if summary.end_time else '?'}\n"
+            f"  摘要: {summary.detail[:120]}{'...' if len(summary.detail) > 120 else ''}\n"
+            f"  ID: {summary.id}"
+        )
+    except ValueError as e:
+        return f"[Error] {e}"
+    except Exception as e:
+        return f"[Error] {type(e).__name__}: {e}"
+
+
+def _handle_recall_topic(arguments: dict) -> str:
+    """召回已归档的话题摘要，支持按标签或 ID 精确查找。
+    用户指令如「继续聊之前的话题」「回顾价值本质的讨论」时调用。
+    返回续谈注入块，直接追加到上下文底部。
+    """
+    topic_label = arguments.get("topic_label", "")
+    topic_id = arguments.get("topic_id", "")
+    show_list = arguments.get("list_all", False)
+
+    from character.summarizer import (
+        build_topics_context,
+        recall_topic_by_label,
+        recall_topic_by_id,
+    )
+
+    if show_list:
+        return build_topics_context(_current_actor)
+
+    if topic_id:
+        try:
+            _, block = recall_topic_by_id(_current_actor, topic_id)
+            return block
+        except ValueError as e:
+            return f"[Error] {e}"
+
+    if topic_label:
+        try:
+            summary, block = recall_topic_by_label(_current_actor, topic_label)
+            label = summary.topic_label or summary.topic or "未命名"
+            return (
+                f"[话题召回] 找到「{label}」（ID: {summary.id}）\n"
+                f"将以下内容注入上下文：\n\n"
+                f"{block}"
+            )
+        except ValueError as e:
+            return f"[Error] {e}"
+
+    return "[Error] 需要 topic_label 或 topic_id 参数，也可传 list_all=true 查看所有话题"
 
 
 # ── 角色管理工具 ──
@@ -1045,6 +1146,56 @@ def _ensure_tools():
                 },
                 fn=None,
             ),
+            # ── 话题归档工具 ──
+            ToolDef(
+                name="park_topic",
+                description=(
+                    "将最近 N 轮对话主动归档为话题摘要，释放上下文空间。\n\n"
+                    "**使用场景**：用户说「转为摘要」「归档这个话题」「先聊别的」时调用。\n\n"
+                    "**效果**：最近 N 轮对话被提炼为结构化摘要存入磁盘，下轮起不再占用上下文。\n"
+                    "后续可通过 recall_topic 精确召回继续讨论。\n\n"
+                    "参数：\n"
+                    "- lookback_turns: 回溯轮数（默认 8），越多信息越完整但摘要越长\n"
+                    "- topic_hint: 话题方向提示（可选，如「价值本质」「电影推荐」）\n"
+                    "- topic_label: 用户指定的话题标签（可选，优先使用，如已有则覆盖）\n"
+                    "- people: 关联人物列表，逗号分隔（可选，如「张三,李四」）\n\n"
+                    "返回归档后的摘要内容。"
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "lookback_turns": {"type": "integer"},
+                        "topic_hint": {"type": "string"},
+                        "topic_label": {"type": "string"},
+                        "people": {"type": "string"},
+                    },
+                    "required": []
+                },
+                fn=None,
+            ),
+            ToolDef(
+                name="recall_topic",
+                description=(
+                    "召回已归档的话题摘要，注入上下文继续讨论。\n\n"
+                    "**使用场景**：用户说「继续聊之前的话题」「回顾价值本质」「我们上次说的」时调用。\n\n"
+                    "**效果**：将话题的结构化摘要注入上下文，角色可以「续谈」而非「复述」。\n\n"
+                    "参数（至少传一个）：\n"
+                    "- topic_label: 话题标签模糊匹配（如「价值本质」「电影」）\n"
+                    "- topic_id: 精确匹配归档 ID（如 T-20260707-143020）\n"
+                    "- list_all: true=列出所有已归档话题（不做召回）\n\n"
+                    "**优先级**：topic_label > topic_id > list_all。"
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "topic_label": {"type": "string"},
+                        "topic_id": {"type": "string"},
+                        "list_all": {"type": "boolean"},
+                    },
+                    "required": []
+                },
+                fn=None,
+            ),
             # ── 角色管理工具 ──
             ToolDef(
                 name="create_character",
@@ -1209,6 +1360,8 @@ _BUILTIN_HANDLERS.update({
     "update_runtime": _handle_update_runtime,
     "update_identity": _handle_update_identity,
     "summarize_conversation": _handle_summarize_conversation,
+    "park_topic": _handle_park_topic,
+    "recall_topic": _handle_recall_topic,
     "create_character": _handle_create_character,
     "list_characters": _handle_list_characters,
     "send_to_character": _handle_send_to_character,

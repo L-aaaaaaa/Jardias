@@ -92,6 +92,11 @@ def get_l3_path(name: str) -> Path:
     return get_character_dir(name) / "summaries" / "L3.json"
 
 
+def get_compression_log_path(name: str) -> Path:
+    """压缩记录表路径。"""
+    return get_character_dir(name) / "summaries" / "compression_log.json"
+
+
 def ensure_dirs(name: str) -> Path:
     """创建并返回角色目录（含 summaries/L1）。如果角色不存在则用时间戳命名新目录。"""
     existing = _resolve_dir(name)

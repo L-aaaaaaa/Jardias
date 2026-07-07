@@ -779,7 +779,6 @@ def dump_context(character_name: str, messages: list[dict]):
         blocks.append(f"<!-- message3 -->\n\n{_flatten(round_msgs[0])}")
     else:
         # 助手已开始回复 → 整个本轮对话归入 message2 的"近期对话原文"
-        now = time.strftime("%Y-%m-%d %H:%M:%S")
         round_lines: list[str] = []
         for i, m in enumerate(round_msgs):
             role = m.get("role", "unknown")
@@ -791,15 +790,19 @@ def dump_context(character_name: str, messages: list[dict]):
             if i > 0 and round_msgs[i - 1].get("_reasoning"):
                 continue
             fence = _choose_fence(text)
-            round_lines.append(f"### [{now}] {role}:\n\n{fence}text\n{text}\n{fence}")
+            msg_time = m.get("time", "")
+            if msg_time:
+                time_str = msg_time[:19]
+            else:
+                time_str = time.strftime("%Y-%m-%d %H:%M:%S")
+            round_lines.append(f"### [{time_str}] {role}:\n\n{fence}text\n{text}\n{fence}")
 
-        # 拆开 message2，在"近期对话原文"末尾插入本轮对话
+        # 拆开 message2，在"近期对话原文"之后、"## 本次用户消息"之前插入本轮对话
         m2_content = _flatten(messages[2])
-        if "## 近期对话原文" in m2_content:
-            idx = m2_content.rfind("## 近期对话原文")
-            # 保留前面的 ## 摘要等部分，只在"近期对话原文"末尾追加本轮对话
-            section_body = m2_content[idx:].rstrip()
-            new_history = m2_content[:idx].rstrip() + "\n\n" + section_body + "\n\n" + "\n\n".join(round_lines)
+        if "## 本次用户消息" in m2_content:
+            idx = m2_content.find("## 本次用户消息")
+            # 在"## 本次用户消息"前追加本轮对话，让新轮出现在历史中
+            new_history = m2_content[:idx].rstrip() + "\n\n" + "\n\n".join(round_lines) + "\n\n" + m2_content[idx:].lstrip()
         else:
             new_history = m2_content + "\n\n## 近期对话原文\n\n" + "\n\n".join(round_lines)
 

@@ -16,5 +16,5 @@ from .ipu import IPUEntry, IPUProviderConfig, IPUConfigFile
 from .ipu_client import (
     IPUConfig, IPUProvider, ToolCall, RoundOutput, ChatResult, RoundMeta, IPUSwitch,
 )
-from .character import L1Summary
+from .character import L1Summary, TopicSegment
 from .tool import ToolDef, ToolParam

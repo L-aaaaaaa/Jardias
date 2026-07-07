@@ -2,7 +2,13 @@
 import re as _re_module
 from datetime import datetime
 
-from character.summarizer import build_l1_context
+from character.summarizer import (
+    load_compression_log,
+    select_summaries_for_context,
+    build_summary_block,
+    build_recent_history_filtered,
+    _build_recent_history,
+)
 from tool.builtin import tools
 from yinao import IPU_REGISTRY, get_ipu_capabilities
 
@@ -134,7 +140,7 @@ def strip_context_wrapper(message: str) -> str:
     pattern = (
         r'^##\s*本次用户消息\s*'
         r'\n+###\s*\[[^\]]+\]\s*user(?:\s*\(t_sent=\d+ms\))?:\s*'
-        r'\n+```text\s*\n'
+        r'\n+```(?:text|json)\s*\n'
         r'(.*?)'
         r'\n```\s*$'
     )
@@ -142,34 +148,6 @@ def strip_context_wrapper(message: str) -> str:
     if m:
         return m.group(1).strip()
     return message
-
-
-def _build_recent_history(history: list[dict], keep_turns: int = 6) -> str:
-    if not history:
-        return "## 近期对话原文\n\n（暂无对话记录）"
-
-    messages: list[str] = []
-    cutoff = max(0, len(history) - keep_turns * 2)
-    for msg in history[cutoff:]:
-        role = msg.get("role", "unknown")
-        t = msg.get("time", "")
-        if role == "system_trigger":
-            header = f"[时策触发 {t}]"
-        else:
-            header = f"[{t}] {role}:" if t else f"{role}:"
-        content = msg.get("content", "")
-        if role == "assistant":
-            content = _re_module.sub(r'\[思考\]\n', '', content)
-            content = _re_module.sub(r'<think>.*?</think>', '', content, flags=_re_module.DOTALL)
-            content = content.strip()
-        fence = "```"
-        if fence in content:
-            fence = "````"
-            if "````" in content:
-                fence = "`````"
-        messages.append(f"### {header}\n\n{fence}text\n{content}\n{fence}")
-
-    return "## 近期对话原文\n\n" + "\n\n".join(messages)
 
 
 def build_system_message(config, character_name: str = "default",
@@ -208,15 +186,18 @@ def form_full_context(config, history: list[dict], user_input: str,
     else:
         result.append({"role": "user", "content": "# 状态\n\n（首轮对话，暂无消耗数据）"})
 
-    l1_block = build_l1_context(character_name)
-    recent_block = (
-        _build_recent_history(history)
-        if history
-        else "## 近期对话原文\n\n（这是你第一次对话，暂无更多历史记录。）"
-    )
+    compression_log = load_compression_log(character_name)
+    selected = select_summaries_for_context(character_name, history, compression_log)
+    summary_block = build_summary_block(selected)
+
+    if history:
+        recent_block = build_recent_history_filtered(history, compression_log)
+    else:
+        recent_block = "## 近期对话原文\n\n（这是你第一次对话，暂无更多历史记录。）"
+
     history_parts: list[str] = []
-    if l1_block:
-        history_parts.append(l1_block)
+    if summary_block:
+        history_parts.append(summary_block)
     history_parts.append(recent_block)
     result.append({"role": "user", "content": f"# 历史\n\n" + "\n\n".join(history_parts)})
 
