@@ -645,7 +645,7 @@ async def reason_action_loop(
                     messages=messages,
                     should_switch=True,
                     switch_provider=switch.provider,
-                    switch_ipu=switch.model,
+                    switch_ipu=switch.ipu,
                 )
         else:
             round_end(i + 1, "no tool calls" if i == 0 else "tool chain done")

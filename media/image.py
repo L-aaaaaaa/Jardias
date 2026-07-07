@@ -71,7 +71,7 @@ def auto_switch_for_vision(ctx, image_url: str) -> bool:
         logger.warning("No vision-capable IPU available")
         return False
 
-    from yinao import save_config
+    from character.config_io import save_config
     from common.actor_log import model_switch as log_model_switch
 
     t_prov, t_ipu = target
