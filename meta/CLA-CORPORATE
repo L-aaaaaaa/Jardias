@@ -1,0 +1,48 @@
+Apache Corporate Contributor License Agreement (CCLA)
+
+> 占位骨架 — 待补完，模板待从 apache.org 下载后填入。
+> 正式签署时本文件应作为 PR 附件存档于 meta/signed-cla/ 目录。
+
+本文件基于 Apache Software Foundation 发布的 CCLA 标准模板，使用时需要：
+
+1. 从 https://www.apache.org/licenses/cla-corporate 下载最新版本
+2. 由企业法定代表人或授权代表签署
+3. 加盖企业公章
+4. 扫描后邮件给项目作者
+
+---
+
+## 适用场景
+
+当贡献者以**企业身份**提交 PR（如：员工在工作时间贡献代码、外包合同约定代码归企业所有），
+需要企业签署 CCLA 而非个人 ICLA。如果不确定，优先选择 ICLA。
+
+---
+
+## 占位字段
+
+```
+Corporate name:        _________________________
+Corporate address:     _________________________
+Point of contact:      _________________________
+Telephone:             _________________________
+E-mail:                _________________________
+GitHub organization:   _________________________
+
+签署人姓名:             _________________________
+签署人职务:             _________________________
+
+签名:                   _________________________
+日期:                   _________________________
+企业公章:               [此处加盖]
+```
+
+---
+
+完整模板下载：https://www.apache.org/licenses/cla-corporate.pdf
+
+说明：
+
+- CCLA 一式三份：企业、ASF、项目存档各一份（本项目存档于 `meta/signed-cla/`）
+- 签署后的扫描件存入 `meta/signed-cla/<organization>.pdf`
+- 项目作者在收到 CCLA 后 14 个工作日内回复确认
