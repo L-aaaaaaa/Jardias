@@ -103,18 +103,18 @@ def format_api_ok(elapsed: float, usage: dict | None = None,
     if usage:
         tokens = []
         if usage.get("prompt_tokens"):
-            tokens.append(f"输入 {usage['prompt_tokens']} ICP")
+            tokens.append(f"输入 {usage['prompt_tokens']} 智点")
         details = usage.get("completion_tokens_details", {}) or {}
         reason_tok = details.get("reasoning_tokens", 0)
         comp_tok = usage.get("completion_tokens", 0)
         if reason_tok:
-            tokens.append(f"思考 {reason_tok} ICP")
+            tokens.append(f"思考 {reason_tok} 智点")
             output_only = comp_tok - reason_tok
-            tokens.append(f"输出 {output_only} ICP")
+            tokens.append(f"输出 {output_only} 智点")
         elif comp_tok:
-            tokens.append(f"输出 {comp_tok} ICP")
+            tokens.append(f"输出 {comp_tok} 智点")
         if usage.get("total_tokens"):
-            tokens.append(f"合计 {usage['total_tokens']} ICP")
+            tokens.append(f"合计 {usage['total_tokens']} 智点")
         if tokens:
             parts.append(" · ".join(tokens))
 
@@ -122,6 +122,31 @@ def format_api_ok(elapsed: float, usage: dict | None = None,
         parts.append("[WARN] 输出被截断(长度限制)")
 
     return " · ".join(parts)
+
+
+def format_round_usage(usage: dict | None) -> str:
+    """把本轮 usage 格式化成中文自然句（用户视角，套入智点计数）。
+
+    例：'本轮输入 4698 智点，输出 17 智点的思考，9 智点的回答，合计 4724 智点'
+    """
+    from common.utils import get_silent
+    if get_silent() or not usage:
+        return ""
+    prompt = usage.get("prompt_tokens", 0)
+    total = usage.get("total_tokens", 0)
+    details = usage.get("completion_tokens_details", {}) or {}
+    reason_tok = details.get("reasoning_tokens", 0)
+    comp_tok = usage.get("completion_tokens", 0)
+
+    parts = [f"本轮输入 {prompt} 智点"]
+    if reason_tok and comp_tok:
+        reply_tok = comp_tok - reason_tok
+        parts.append(f"输出 {reason_tok} 智点的思考，{reply_tok} 智点的回答")
+    elif comp_tok:
+        parts.append(f"输出 {comp_tok} 智点的回答")
+    if total:
+        parts.append(f"合计 {total} 智点")
+    return "，".join(parts) + "。"
 
 
 # ══════════════════════════════════════════════════════════════

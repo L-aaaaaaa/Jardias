@@ -56,7 +56,7 @@ def separate_print(separator: str = "─", title: str = "", length: int = 50,
         return
     if end:
         set_stream_color(None)
-        print(f"\n{' -' * (length // 2)}\n")
+        print(f"\n{' -' * (length // 2)}")
         return
 
     # 根据标题自动切换流式颜色

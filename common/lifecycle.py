@@ -152,10 +152,11 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
 
 
 def _collect_round_meta(round_ok: bool, ctx) -> str:
-    from yinao.ipu_client.ipu_context import last_round
+    from yinao.ipu_client.ipu_context import last_round, build_round_context
     if round_ok:
         update_cumulative(last_round.usage, ctx.provider, last_round.api_time)
-    return build_round_context()
+    # 传 character_name 让 build_round_context 从 _dump_meta.json 读累计（持久化）
+    return build_round_context(ctx.character_name)
 
 
 def _post_round(ctx, user_input: str, messages: list[dict], round_ok: bool = True, ts: str | None = None):
@@ -179,11 +180,31 @@ def _build_failure_reply(ctx, messages):
     return f"[本轮对话失败] 引擎 {ctx.provider}/{ctx.ipu} 返回错误，且无可用备选供应商。错误: {err}。"
 
 
-async def _post_round_async(ctx, user_input, messages, round_ok=True, ts=None):
+async def _post_round_async(ctx, user_input, messages, round_ok=True, ts=None, round_context: str = ""):
     _post_round(ctx, user_input, messages, round_ok, ts=ts)
     from yinao.ipu_client.common_client_util import dump_experience
-    dump_experience(ctx.character_name, None)
-    await check_and_compress(ctx.character_name, ctx.history.messages)
+    from yinao.ipu_client.ipu_context import last_round
+    # 把本轮 usage 传给 dump_experience，累加到 _dump_meta.json（持久化）
+    dump_experience(
+        ctx.character_name, None,
+        round_context=round_context or None,
+        round_usage=last_round.usage if round_ok else None,
+    )
+    # L1 摘要移到后台任务：避免阻塞主对话循环（v4-flash LLM 摘要耗时 10s+）
+    asyncio.create_task(_check_and_compress_safe(ctx.character_name, ctx.history.messages))
+
+
+async def _check_and_compress_safe(character_name: str, messages: list[dict]):
+    """后台 L1 摘要调用：异常仅记日志，不影响主流程。
+
+    把传入 messages 浅拷贝——避免后台跑时主流程继续 append 导致切片漂移。
+    """
+    snapshot = list(messages)
+    try:
+        await check_and_compress(character_name, snapshot)
+    except Exception as e:
+        from common.logger import logger
+        logger.warning(f"  [L1-bg] 后台压缩失败: {e}")
 
 
 async def _do_switch_character(ctx, name: str):
@@ -510,7 +531,7 @@ async def conversation_loop(ctx, allow_switch: bool = False):
             turn_ts = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
             round_ok, messages = await _run_turn(ctx, user_words, image_url, switch_note, round_context)
             round_context = _collect_round_meta(round_ok, ctx)
-            await _post_round_async(ctx, user_words, messages, round_ok, ts=turn_ts)
+            await _post_round_async(ctx, user_words, messages, round_ok, ts=turn_ts, round_context=round_context)
             _stdin_ready.set()
 
             next_character = clear_pending_switch()

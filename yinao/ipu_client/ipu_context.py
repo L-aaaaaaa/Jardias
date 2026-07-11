@@ -139,6 +139,27 @@ def _usage_to_icp(usage: dict) -> dict:
     }
 
 
+def _load_cumulative(character_name: str) -> dict:
+    """从 _dump_meta.json 读取持久化的累计用量。"""
+    try:
+        from character import get_character_dir
+        meta_path = get_character_dir(character_name) / "_dump_meta.json"
+        if not meta_path.exists():
+            return {"prompt_icp": 0, "completion_icp": 0,
+                    "total_icp": 0, "thinking_icp": 0}
+        import json
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        return {
+            "prompt_icp": meta.get("prompt_icp", 0),
+            "completion_icp": meta.get("completion_icp", 0),
+            "total_icp": meta.get("total_icp", 0),
+            "thinking_icp": meta.get("thinking_icp", 0),
+        }
+    except Exception:
+        return {"prompt_icp": 0, "completion_icp": 0,
+                "total_icp": 0, "thinking_icp": 0}
+
+
 def update_cumulative(usage: dict | None, provider: str, elapsed: float):
     if usage:
         icp = _usage_to_icp(usage)
@@ -152,36 +173,41 @@ def update_cumulative(usage: dict | None, provider: str, elapsed: float):
     provider_latency[provider].append(elapsed)
 
 
-def build_round_context() -> str:
-    """从 RoundMeta + 累计数据构建注入上下文的元信息块（ICP 视角）。"""
+def build_round_context(character_name: str | None = None) -> str:
+    """从 RoundMeta + 累计数据构建注入上下文的元信息块（ICP 视角）。
+
+    累计数据优先从 _dump_meta.json 读取（持久化，跨重启累计），
+    未传 character_name 时退回到进程内 cumulative_usage（向后兼容）。
+    """
     parts: list[str] = ["# 状态"]
 
-    # 1. ICP 用量
+    # 1. ICP 用量（用户视角自然句，与终端本轮消耗同款措辞）
     if last_round.usage:
         icp = _usage_to_icp(last_round.usage)
-        tokens: list[str] = []
-        if icp.get("prompt_icp"):
-            tokens.append(f"输入 {icp['prompt_icp']} ICP")
+        sentence = [f"**上轮消耗**: 本轮输入 {icp.get('prompt_icp', 0)} 智点"]
         reason_tok = icp.get("thinking_icp", 0)
         comp_tok = icp.get("completion_icp", 0)
         if reason_tok:
-            tokens.append(f"思考 {reason_tok} ICP")
-            tokens.append(f"输出 {comp_tok - reason_tok} ICP")
+            sentence.append(f"输出 {reason_tok} 智点的思考，{comp_tok - reason_tok} 智点的回答")
         elif comp_tok:
-            tokens.append(f"输出 {comp_tok} ICP")
+            sentence.append(f"输出 {comp_tok} 智点的回答")
         if icp.get("total_icp"):
-            tokens.append(f"合计 {icp['total_icp']} ICP")
-        parts.append("**上轮消耗**: " + " · ".join(tokens))
+            sentence.append(f"合计 {icp['total_icp']} 智点")
+        parts.append("，".join(sentence) + "。")
 
-        cu = cumulative_usage
-        if cu["total_icp"] > 0:
-            cost = []
-            cost.append(f"累计输入 {cu['prompt_icp']} ICP")
-            if cu["thinking_icp"]:
-                cost.append(f"累计思考 {cu['thinking_icp']} ICP")
-            cost.append(f"累计输出 {cu['completion_icp']} ICP")
-            cost.append(f"累计合计 {cu['total_icp']} ICP")
-            parts.append("**累计消耗**: " + " · ".join(cost))
+        cu = _load_cumulative(character_name) if character_name else cumulative_usage
+        if cu.get("total_icp", 0) > 0:
+            cu_sentence = [
+                f"**累计消耗**: 累计输入 {cu.get('prompt_icp', 0)} 智点"
+            ]
+            cu_reason = cu.get("thinking_icp", 0)
+            cu_comp = cu.get("completion_icp", 0)
+            if cu_reason:
+                cu_sentence.append(f"含 {cu_reason} 智点的思考和 {cu_comp - cu_reason} 智点的回答")
+            elif cu_comp:
+                cu_sentence.append(f"含 {cu_comp} 智点的回答")
+            cu_sentence.append(f"累计合计 {cu.get('total_icp', 0)} 智点")
+            parts.append("，".join(cu_sentence) + "。")
 
     # 2. 截断通知
     if last_round.finish_reason == "length":

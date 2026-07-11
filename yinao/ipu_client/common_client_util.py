@@ -8,7 +8,7 @@ import time
 from openai import OpenAI
 
 from character import get_character_dir
-from common.actor_log import round_start, round_end, max_rounds_reached, format_api_ok
+from common.actor_log import round_start, round_end, max_rounds_reached, format_api_ok, format_round_usage
 from common.logger import logger
 from common.utils import separate_print, stream_print, set_display_name, get_silent, set_stream_color
 from data_shape import IPUProvider, IPUConfig, ToolCall, RoundOutput, ChatResult
@@ -64,7 +64,8 @@ def form_stream(full_context_list: list, client=None, ipu_config=None):
         model=ipu_config.ipu,
         extra_body=ipu_config.extra_body,
         stream=ipu_config.stream,
-        stream_options=getattr(ipu_config, "stream_options", None) or None,
+        # 流式响应必须显式 include_usage，OpenAI 默认不返回 usage
+        stream_options={"include_usage": True},
         temperature=ipu_config.temperature,
         top_p=ipu_config.top_p,
         max_completion_tokens=ipu_config.max_icp,
@@ -533,6 +534,10 @@ async def _run_common_round(
     print()  # 流式输出收尾换行
     if output.content.strip():
         separate_print(end=True)
+    # 用户视角：本轮消耗（紧贴虚线）
+    line = format_round_usage(output.usage)
+    if line:
+        print(line)
     elapsed = time.time() - t0
     logger.info(f"    {format_api_ok(elapsed, output.usage, output.finish_reason)}")
     set_round_meta(elapsed, output.usage, output.finish_reason)
@@ -802,16 +807,21 @@ def _render_messages_as_dialogue(msgs: list[dict]) -> str:
 
 # ── experience.md 快照 ────────────────────────────────────────────────────────
 
-def dump_experience(character_name: str, messages: list[dict] | None = None):
+def dump_experience(character_name: str, messages: list[dict] | None = None,
+                   round_context: str | None = None,
+                   round_usage: dict | None = None):
     """增量追加对话历史到 experience.md。
 
     始终从磁盘读取 history.json 获取最新消息列表。
     用 _dump_meta.json 的 written_len（消息数）作为计数器，不依赖条目数。
+    round_context: 当前轮次的状态（上轮消耗/累计消耗），非空时写入 message1。
+    round_usage: 当前轮次的 usage，累加到 _dump_meta.json 的累计字段（持久化）。
     """
     import json, re
-    from common.experience_core import update_experience
+    from common.experience_core import update_experience, load_experience, _write_experience_file
     from character import get_character_dir, get_history_path
     from character.history import History
+    from yinao.ipu_client.ipu_context import _usage_to_icp
 
     # 始终从磁盘读取最新状态
     hp = str(get_history_path(character_name))
@@ -828,19 +838,40 @@ def dump_experience(character_name: str, messages: list[dict] | None = None):
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
     current_written = meta.get("written_len", 0)
 
-    # 没有新增则跳过
+    # 累加本轮 usage 到 _dump_meta.json 的累计字段（持久化，跨重启累计）
+    if round_usage:
+        icp = _usage_to_icp(round_usage)
+        meta["prompt_icp"] = meta.get("prompt_icp", 0) + icp["prompt_icp"]
+        meta["completion_icp"] = meta.get("completion_icp", 0) + icp["completion_icp"]
+        meta["total_icp"] = meta.get("total_icp", 0) + icp["total_icp"]
+        meta["thinking_icp"] = meta.get("thinking_icp", 0) + icp["thinking_icp"]
+
+    # 写入状态区块 (message1) — 与增量消息逻辑独立，先于 early return，
+    # 即使本轮无新消息（history 已与 disk 同步），也要把 round_context 持久化。
+    # 跳过占位标题（"# 状态" 单独一行，无任何数据），否则会把原占位符覆盖。
+    if round_context and round_context.strip() != "# 状态":
+        blocks = load_experience(character_name)
+        if blocks[1] != round_context:
+            blocks[1] = round_context
+            path = get_character_dir(character_name) / "experience.md"
+            _write_experience_file(path, blocks)
+
+    # 没有新增则跳过增量部分（状态已写）——但仍要落盘累计字段
     if len(dialogue_msgs) <= current_written:
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
         return
 
     # 只写未写部分
     new_msgs = dialogue_msgs[current_written:]
     if not new_msgs:
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
         return
 
     update_experience(character_name, "dump", {
         "messages": new_msgs,
         "_meta": meta,
         "character_name": character_name,
+        "round_context": round_context,
     })
 
     # 同步 _dump_meta.json（用消息数，而非条目数）
