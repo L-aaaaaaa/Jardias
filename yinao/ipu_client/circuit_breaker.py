@@ -20,7 +20,7 @@ class CircuitBreaker:
     """
     熔断器：连续失败 >= threshold 次 → 熔断，reset_after 秒后自动恢复。
 
-    线程不安全（Actor01 单线程运行），无需加锁。
+    线程不安全（Jardias 单线程运行），无需加锁。
     """
 
     def __init__(self, threshold: int = 2, reset_after: float = 300.0):

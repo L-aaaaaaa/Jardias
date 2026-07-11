@@ -1,4 +1,6 @@
-﻿import json
+from __future__ import annotations
+
+import json
 import os
 import re
 import time
@@ -41,7 +43,9 @@ def single_completion(
         temperature=temperature,
         max_completion_tokens=max_icp,
     )
-    return response.choices[0].message.content
+    if not response.choices:
+        return ""
+    return response.choices[0].message.content or ""
 
 
 def form_stream(full_context_list: list, client=None, ipu_config=None):
@@ -124,6 +128,8 @@ def collect_round(stream, reasoning_field: str = "reasoning_details", is_tool_ro
         if not getattr(chunk, "choices", None):
             if hasattr(chunk, "usage") and chunk.usage:
                 usage = chunk.usage.model_dump() if hasattr(chunk.usage, "model_dump") else None
+            continue
+        if not chunk.choices:
             continue
 
         delta = chunk.choices[0].delta
@@ -304,6 +310,8 @@ def collect_round(stream, reasoning_field: str = "reasoning_details", is_tool_ro
         # 用量（仅尾 chunk）
         if hasattr(chunk, "usage") and chunk.usage:
             usage = chunk.usage.model_dump() if hasattr(chunk.usage, "model_dump") else None
+        if not chunk.choices:
+            continue
         finish_reason = chunk.choices[0].finish_reason
 
         if finish_reason == "tool_calls":
@@ -477,7 +485,7 @@ def stream_chat(full_context_list: list[dict[str, str]], ipu_config=None):
     stream = form_stream(full_context_list, ipu_config=ipu_config)
     state = StreamState()
     for chunk in stream:
-        if not getattr(chunk, "choices", None):
+        if not getattr(chunk, "choices", None) or not chunk.choices:
             continue
         delta = chunk.choices[0].delta
         handle_reasoning(delta, state)
@@ -501,20 +509,23 @@ async def _run_common_round(
         reasoning_inline: bool = False,
         character_name: str = "",
         is_tool_round: bool = False,
+        on_history_save: callable | None = None,
 ):
     """公共单轮执行：流式请求 + 响应收集 + assistant 消息组装。
 
     reasoning_field: "reasoning_details" (MiniMax) | "reasoning_content" (DeepSeek/DashScope)
     reasoning_inline: True → reasoning 嵌入 assistant 消息 (DeepSeek)
                      False → reasoning 作为独立消息 (MiniMax/DashScope)
-    character_name: 角色名，非空时每次 API 调用前写入 context_latest.md
+    character_name: 角色名，非空时每次 API 调用前写入 experience.md
     is_tool_round: 是否为工具调用的后续轮次（True 时不重复打印"回复"标题）
+    on_history_save: 每次 API 调用后触发 history 保存回调（用于实时更新 history.json）
     """
     round_start(iteration + 1, len(messages))
 
     # 上下文拦截器：每轮 API 调用前写入完整上下文快照
-    if character_name:
-        dump_context(character_name, messages)
+    # 已移除：dump_experience 调用
+    # 原因：此时 history.json 中的 assistant 还未写入，导致 experience.md 快照不完整
+    # experience.md 的写入统一由 _post_round_async 在对话结束时处理
 
     stream = form_stream(messages, ipu_config=ipu_config)
     t0 = time.time()
@@ -546,6 +557,11 @@ async def _run_common_round(
         ]
 
     messages.append(msg)
+
+    # 触发 history 保存回调（实时更新 history.json）
+    if on_history_save:
+        on_history_save()
+
     return output, messages
 
 
@@ -555,11 +571,14 @@ async def reason_action_loop(
         reasoning_field: str = "reasoning_details",
         reasoning_inline: bool = False,
         character_name: str = "",
+        on_history_save: callable | None = None,
 ) -> ChatResult:
     """公共 Reason-Action 循环：多轮工具调用，直到模型给出最终回复。
 
     返回 ChatResult — 用 should_switch 替代 IPUSwitched 异常。
-    character_name 非空时，每轮 API 调用前写入 context_latest.md。
+    character_name 非空时，每轮 API 调用前写入 experience.md。
+    每次工具执行后也会写入 experience.md 并触发 on_history_save。
+    on_history_save: 每次 API 调用后触发 history 保存回调（用于实时更新 history.json）
     """
     if character_name:
         set_display_name(character_name)
@@ -572,6 +591,7 @@ async def reason_action_loop(
             reasoning_inline=reasoning_inline,
             character_name=character_name,
             is_tool_round=(i > 0),
+            on_history_save=on_history_save,
         )
         last_content = output.content
 
@@ -610,7 +630,13 @@ async def reason_action_loop(
                     if tc.name == "send_to_character":
                         # 显示对方角色的完整回复
                         separate_print(title=f"{tc.name} 回复")
-                        print(f"  {result}")
+                        # 安全打印，避免编码问题
+                        try:
+                            print(f"  {result}")
+                        except UnicodeEncodeError:
+                            # 移除无法打印的字符
+                            safe = result.encode('ascii', errors='ignore').decode('ascii')
+                            print(f"  [内容已简化] {safe[:500]}")
                     elif tc.name == "shice_schedule_add":
                         # 时策注册结果简要显示
                         print(f"  [OK] {tc.name}: {result[:200]}")
@@ -622,6 +648,10 @@ async def reason_action_loop(
                     "name": tc.name,
                     "content": result,
                 })
+
+                # 每次工具执行后：触发 history 保存回调
+                if on_history_save:
+                    on_history_save()
 
                 # send_to_character 后注入独立提示：防止 LLM 在文本回复中直接跟角色对话
                 if tc.name == "send_to_character":
@@ -639,8 +669,6 @@ async def reason_action_loop(
             # Item 1: 检查模型切换请求（替代 IPUSwitched 异常）
             switch = pop_switch()
             if switch:
-                if character_name:
-                    dump_context(character_name, messages)
                 return ChatResult(
                     messages=messages,
                     should_switch=True,
@@ -649,13 +677,10 @@ async def reason_action_loop(
                 )
         else:
             round_end(i + 1, "no tool calls" if i == 0 else "tool chain done")
-            if character_name:
-                dump_context(character_name, messages)
+            # dump_experience 已移除，统一由 _post_round_async 调用
             return ChatResult(messages=messages)
 
     max_rounds_reached(MAX_ITER)
-    if character_name:
-        dump_context(character_name, messages)
     return ChatResult(messages=messages)
 
 
@@ -689,7 +714,7 @@ def _log_tool_result_common(tool_name: str, result: str):
         logger.info(f"    [RESULT] 工具结果 | {tool_name} → {first_line}")
 
 
-# ── context_latest.md 快照 ──
+# ── experience.md 快照 ──
 
 def _choose_fence(text: str) -> str:
     """选择足够长的代码块 fence，确保不与内容中的反引号序列冲突。"""
@@ -702,116 +727,122 @@ def _choose_fence(text: str) -> str:
     return "`" * max(3, n)
 
 
-def dump_context(character_name: str, messages: list[dict]):
-    """将本轮上下文写入 context_latest.md —— 4 层固定结构 + 动态归位。
+def _flatten(msg: dict) -> str:
+    """将一条消息转为可读文本。"""
+    content = msg.get("content")
+    parts: list[str] = []
 
-    结构：
-      message0 = 系统提示词（固定）
-      message1 = 状态（固定）
-      message2 = 历史（摘要 + 近期对话原文 + 本轮对话）
-      message3 = 本次用户消息（助手未回复时）→ 助手开始回复后归入 message2
-    """
-    path = get_character_dir(character_name) / "context_latest.md"
-    blocks: list[str] = []
+    # 推理内容不展示
+    if msg.get("role") == "assistant" and msg.get("reasoning_content"):
+        pass
 
-    def _flatten(msg: dict) -> str:
-        """将一条消息转为可读文本。"""
-        content = msg.get("content")
-        parts: list[str] = []
-
-        # 推理内容单独一行标注
-        _reasoning_added = False
-        if msg.get("role") == "assistant" and msg.get("reasoning_content"):
-            # reasoning 不在 context_latest.md 中展示，避免和 content 混淆
-            pass
-            _reasoning_added = True
-
-        if isinstance(content, list):
-            for item in content:
-                if item.get("type") == "image_url":
-                    url = item.get("image_url", {}).get("url", "")
-                    tag = f"[image: {url[:60]}...]" if len(url) > 60 else f"[image: {url}]"
-                    parts.append(tag)
-                else:
-                    parts.append(item.get("text", ""))
-        elif content:
-            # 仅对 user 消息剥离 form_full_context 包裹
-            if msg.get("role") == "user":
-                from common.context import strip_context_wrapper
-                clean = strip_context_wrapper(str(content))
-                parts.append(clean)
+    if isinstance(content, list):
+        for item in content:
+            if item.get("type") == "image_url":
+                url = item.get("image_url", {}).get("url", "")
+                tag = f"[image: {url[:60]}...]" if len(url) > 60 else f"[image: {url}]"
+                parts.append(tag)
             else:
-                parts.append(str(content))
-
-        if msg.get("role") == "tool":
-            tc_name = msg.get("name", "")
-            if tc_name:
-                parts.insert(0, f"[tool_call: {tc_name}]")
-
-        if tool_calls := msg.get("tool_calls"):
-            tc_lines = ["[tool_calls]"]
-            for tc in tool_calls:
-                fn = tc.get("function", {})
-                name = fn.get("name", "?")
-                args = fn.get("arguments", "")
-                if isinstance(args, str) and len(args) > 120:
-                    args = args[:120] + "..."
-                elif isinstance(args, dict):
-                    args = json.dumps(args, ensure_ascii=False)
-                tc_lines.append(f"  {name}({args})")
-            parts.append("\n".join(tc_lines))
-
-        return "\n".join(parts)
-
-    # ── message0-2: 固定的三层结构 ──
-    structural_msgs = messages[:3]  # system, 状态, 历史
-    for i, m in enumerate(structural_msgs):
-        content = _flatten(m)
-        blocks.append(f"<!-- message{i} -->\n\n{content}")
-
-    # ── message3 + 本轮对话 ──
-    round_msgs = messages[3:]  # 用户输入 + 可能的助手/tool 链
-    if not round_msgs:
-        # 不应该到达这里
-        blocks.append("<!-- message3 -->\n\n（无用户消息）")
-    elif len(round_msgs) == 1:
-        # 仅用户消息，助手尚未回复 → 保留 message3
-        blocks.append(f"<!-- message3 -->\n\n{_flatten(round_msgs[0])}")
-    else:
-        # 助手已开始回复 → 整个本轮对话归入 message2 的"近期对话原文"
-        round_lines: list[str] = []
-        for i, m in enumerate(round_msgs):
-            role = m.get("role", "unknown")
-            # MiniMax：独立推理消息的内容合并到下一条 assistant，不单独成块
-            if m.get("_reasoning") and role == "assistant":
-                continue
-            text = _flatten(m)
-            # 前一条若是独立推理消息，跳过不渲染（避免 [思考] 混入对话）
-            if i > 0 and round_msgs[i - 1].get("_reasoning"):
-                continue
-            fence = _choose_fence(text)
-            msg_time = m.get("time", "")
-            if msg_time:
-                time_str = msg_time[:19]
-            else:
-                time_str = time.strftime("%Y-%m-%d %H:%M:%S")
-            round_lines.append(f"### [{time_str}] {role}:\n\n{fence}text\n{text}\n{fence}")
-
-        # 拆开 message2，在"近期对话原文"之后、"## 本次用户消息"之前插入本轮对话
-        m2_content = _flatten(messages[2])
-        if "## 本次用户消息" in m2_content:
-            idx = m2_content.find("## 本次用户消息")
-            # 在"## 本次用户消息"前追加本轮对话，让新轮出现在历史中
-            new_history = m2_content[:idx].rstrip() + "\n\n" + "\n\n".join(round_lines) + "\n\n" + m2_content[idx:].lstrip()
+                parts.append(item.get("text", ""))
+    elif content:
+        # 仅对 user 消息剥离 form_full_context 包裹
+        if msg.get("role") == "user":
+            from common.context import strip_context_wrapper
+            clean = strip_context_wrapper(str(content))
+            parts.append(clean)
         else:
-            new_history = m2_content + "\n\n## 近期对话原文\n\n" + "\n\n".join(round_lines)
+            parts.append(str(content))
 
-        blocks[2] = f"<!-- message2 -->\n\n{new_history}"
-        # message3: 等待下一轮
-        blocks.append("<!-- message3 -->\n\n## 本次用户消息\n\n（等待下一轮用户输入）")
+    if msg.get("role") == "tool":
+        tc_name = msg.get("name", "")
+        if tc_name:
+            parts.insert(0, f"[tool_call: {tc_name}]")
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("\n\n".join(blocks) + "\n")
-        f.flush()
-        os.fsync(f.fileno())
+    if tool_calls := msg.get("tool_calls"):
+        tc_lines = ["[tool_calls]"]
+        for tc in tool_calls:
+            fn = tc.get("function", {})
+            name = fn.get("name", "?")
+            args = fn.get("arguments", "")
+            if isinstance(args, str) and len(args) > 120:
+                args = args[:120] + "..."
+            elif isinstance(args, dict):
+                args = json.dumps(args, ensure_ascii=False)
+            tc_lines.append(f"  {name}({args})")
+        parts.append("\n".join(tc_lines))
+
+    return "\n".join(parts)
+
+
+def _render_messages_as_dialogue(msgs: list[dict]) -> str:
+    """将消息列表渲染为对话格式（不含 ## 标题）。
+
+    用于从 messages 列表中提取历史消息，不依赖 message2 内容。
+    """
+    if not msgs:
+        return ""
+    lines: list[str] = []
+    for m in msgs:
+        role = m.get("role", "unknown")
+        # 跳过 system 消息
+        if role == "system":
+            continue
+        # 跳过系统提示消息
+        content = m.get("content", "")
+        if isinstance(content, str) and content.startswith("[系统]"):
+            continue
+
+        text = _flatten(m)
+        fence = _choose_fence(text)
+        msg_time = m.get("time", "")
+        time_str = msg_time[:19] if msg_time else time.strftime("%Y-%m-%d %H:%M:%S")
+        lines.append(f"### [{time_str}] {role}:\n\n{fence}text\n{text}\n{fence}")
+    return "\n\n".join(lines)
+
+
+# ── experience.md 快照 ────────────────────────────────────────────────────────
+
+def dump_experience(character_name: str, messages: list[dict] | None = None):
+    """增量追加对话历史到 experience.md。
+
+    始终从磁盘读取 history.json 获取最新消息列表。
+    用 _dump_meta.json 的 written_len（消息数）作为计数器，不依赖条目数。
+    """
+    import json, re
+    from common.experience_core import update_experience
+    from character import get_character_dir, get_history_path
+    from character.history import History
+
+    # 始终从磁盘读取最新状态
+    hp = str(get_history_path(character_name))
+    hist = History(hp).load()
+    all_msgs = hist.messages
+
+    # history.json 直接存储对话消息 [user1, assistant1, user2, assistant2, ...]
+    dialogue_msgs = all_msgs
+
+    # 读取 _dump_meta.json 的 written_len（对话消息计数）
+    meta_path = get_character_dir(character_name) / "_dump_meta.json"
+    meta = {}
+    if meta_path.exists():
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    current_written = meta.get("written_len", 0)
+
+    # 没有新增则跳过
+    if len(dialogue_msgs) <= current_written:
+        return
+
+    # 只写未写部分
+    new_msgs = dialogue_msgs[current_written:]
+    if not new_msgs:
+        return
+
+    update_experience(character_name, "dump", {
+        "messages": new_msgs,
+        "_meta": meta,
+        "character_name": character_name,
+    })
+
+    # 同步 _dump_meta.json（用消息数，而非条目数）
+    meta["written_len"] = len(dialogue_msgs)
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")

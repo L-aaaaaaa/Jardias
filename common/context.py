@@ -13,13 +13,21 @@ from tool.builtin import tools
 from yinao import IPU_REGISTRY, get_ipu_capabilities
 
 
-def _build_character_context() -> str:
+def _build_character_context(current_character: str | None = None) -> str:
+    """生成可用角色列表。
+
+    关键修复 (P2):如果传入了 current_character,则从列表中排除自己,
+    否则角色会在自己的 system prompt 中看到自己,造成冗余。
+    """
     from character.registry import registry
     chars = registry.scan()
     if not chars:
         return "暂无可用角色。你可以使用 create_character 工具创建新角色。"
     lines = ["可用角色:"]
     for name in chars:
+        # 排除自己
+        if current_character and name == current_character:
+            continue
         try:
             config = registry.get_config(name)
             title = config.identity.title or name
@@ -71,8 +79,11 @@ def _build_shice_guide() -> str:
     )
 
 
-def build_config_context(config) -> str:
-    """注入运行时引擎信息（IPU + ICP 视角）。"""
+def build_config_context(config, character_name: str | None = None) -> str:
+    """注入运行时引擎信息（IPU + ICP 视角）。
+
+    character_name 用于在角色列表中排除自己。
+    """
     rt = config.runtime
     full_name = _get_full_ipu_name(rt.provider, rt.ipu)
     my_caps = _caps_summary(get_ipu_capabilities(rt.provider, rt.ipu))
@@ -129,7 +140,7 @@ def build_config_context(config) -> str:
 注意：这不是建议，是硬性要求。使用英文思考视为违规。
 
 ### 角色管理
-{_build_character_context()}
+{_build_character_context(character_name)}
 
 {_env_block}"""
 
@@ -168,7 +179,7 @@ def build_system_message(config, character_name: str = "default",
         meta_lines.append(f"关于你: {desc_text}。")
     identity_meta = "\n".join(meta_lines)
 
-    engine_block = build_config_context(config)
+    engine_block = build_config_context(config, character_name=character_name)
     parts = [f"# 系统提示词\n\n## 身份\n\n{identity_meta}\n\n{identity_block}{birth_note}", engine_block]
     if switch_note:
         parts.append(switch_note)
@@ -179,43 +190,28 @@ def form_full_context(config, history: list[dict], user_input: str,
         image_url: str = None, switch_note: str = None,
         round_context: str = "", character_name: str = "default") -> list[dict]:
     """固定 3 消息 + 用户输入 = 消息数 O(1)。"""
-    result: list[dict] = [build_system_message(config, character_name, switch_note)]
+    from common.experience_core import (
+        build_context_from_experience,
+        update_experience,
+        load_experience,
+    )
+    from character import get_history_path
 
-    if round_context:
-        result.append({"role": "user", "content": round_context})
-    else:
-        result.append({"role": "user", "content": "# 状态\n\n（首轮对话，暂无消耗数据）"})
+    # ── 确保 experience.md 存在 ──
+    exp_blocks = load_experience(character_name)
+    if not exp_blocks[0]:  # message0 为空，说明未初始化
+        from common.experience_core import init_experience
+        init_experience(character_name, config)
 
-    compression_log = load_compression_log(character_name)
-    selected = select_summaries_for_context(character_name, history, compression_log)
-    summary_block = build_summary_block(selected)
+    # ── 步骤1：先将用户输入写入 experience.md（用户输入先写原则） ──
+    update_experience(character_name, "用户输入", {"user_input": user_input})
 
-    if history:
-        recent_block = build_recent_history_filtered(history, compression_log)
-    else:
-        recent_block = "## 近期对话原文\n\n（这是你第一次对话，暂无更多历史记录。）"
-
-    history_parts: list[str] = []
-    if summary_block:
-        history_parts.append(summary_block)
-    history_parts.append(recent_block)
-    result.append({"role": "user", "content": f"# 历史\n\n" + "\n\n".join(history_parts)})
-
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    t_sent_ms = int(datetime.now().timestamp() * 1000)
-    if image_url:
-        clean_input = _re_module.sub(
-            r'(?:https?://[^\s]+|[A-Za-z]:[\\/][^\s]+)\.(?:png|jpg|jpeg|webp|gif|bmp)(?:\?[^\s]*)?\s*',
-            '', user_input, flags=_re_module.IGNORECASE
-        )
-        clean_input = clean_input.strip() or user_input
-        text_block = f"## 本次用户消息\n\n### [{now}] user (t_sent={t_sent_ms}ms):\n\n```text\n{clean_input}\n```"
-        user_content = [
-            {"type": "image_url", "image_url": {"url": image_url}},
-            {"type": "text", "text": text_block},
-        ]
-    else:
-        user_content = f"## 本次用户消息\n\n### [{now}] user (t_sent={t_sent_ms}ms):\n\n```text\n{user_input}\n```"
-    result.append({"role": "user", "content": user_content})
-
-    return result
+    # ── 步骤2：从 experience.md 构建 messages ──
+    return build_context_from_experience(
+        config=config,
+        character_name=character_name,
+        user_input=user_input,
+        image_url=image_url,
+        switch_note=switch_note,
+        round_context=round_context,
+    )

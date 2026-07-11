@@ -3,6 +3,7 @@
 import inspect as _inspect
 import pathlib
 import re
+from datetime import datetime as _dt
 
 from data_shape import ToolDef
 
@@ -326,11 +327,24 @@ async def _handle_park_topic(arguments: dict) -> str:
     """将最近 N 轮对话主动归档为话题摘要。
     用户指令如「转为摘要」「归档这个话题」时调用。
     """
+    from common.experience_core import update_experience
     import json
     from character import get_history_path
-    from character.summarizer import park_topic as _park_topic
+    from character.summarizer import (
+        park_topic as _park_topic,
+        load_compression_log,
+        _gaps_between_covered,
+    )
+    # 兼容老 import：history_json_to_markdown 已被移除
+    try:
+        from character.summarizer import history_json_to_markdown
+    except ImportError:
+        history_json_to_markdown = None
 
-    lookback_turns = int(arguments.get("lookback_turns", 8))
+    lookback_turns = int(arguments.get("lookback_turns", 8) or 8)
+    # 修复：LLM 偶尔会传 0 或负数，确保是正整数
+    if lookback_turns <= 0:
+        lookback_turns = 8
     topic_hint = arguments.get("topic_hint", "")
     topic_label = arguments.get("topic_label", "")
     people_str = arguments.get("people", "")
@@ -343,6 +357,12 @@ async def _handle_park_topic(arguments: dict) -> str:
     with open(history_path, "r", encoding="utf-8") as f:
         messages: list[dict] = json.load(f)
 
+    # 准备工具调用的可见性数据：原始 arguments JSON + park 时间戳
+    # 这样 update_experience("park") 可以把 park 工具调用本身渲染到 experience.md
+    # 否则 _render_single_message 会 skip name=park_topic 的 tool 消息
+    tool_call_args = json.dumps(arguments, ensure_ascii=False)
+    park_ts = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+
     try:
         summary = await _park_topic(
             character_name=_current_actor,
@@ -352,9 +372,29 @@ async def _handle_park_topic(arguments: dict) -> str:
             topic_label=topic_label,
             people=people,
         )
+
+        # 重新渲染近期对话原文（按 compression_log 过滤）
+        log = load_compression_log(_current_actor)
+        gaps = _gaps_between_covered(len(messages), log)
+        visible_msgs = []
+        for start, end in gaps:
+            visible_msgs.extend(messages[start:end + 1])
+
+        # 构建 summary_entry
+        summary_entry = {
+            "id": summary.id,
+            "topic_label": summary.topic_label or summary.topic or "归档话题",
+            "start_time": summary.start_time,
+            "end_time": summary.end_time,
+            "user_turns": summary.user_turns,
+            "detail": summary.detail,
+            "msg_indices": list(summary.msg_indices),
+        }
+
+        # 先把工具结果字符串准备好（同时给 LLM 返回 + 给 experience.md 写）
         label = summary.topic_label or summary.topic or "归档话题"
         people_str_out = "、".join(summary.people) if summary.people else "无特定人物"
-        return (
+        tool_result = (
             f"[OK] 话题「{label}」已归档\n"
             f"  人物: {people_str_out}\n"
             f"  轮次: {summary.user_turns} 轮\n"
@@ -363,8 +403,31 @@ async def _handle_park_topic(arguments: dict) -> str:
             f"  摘要: {summary.detail[:120]}{'...' if len(summary.detail) > 120 else ''}\n"
             f"  ID: {summary.id}"
         )
+
+        # 更新 experience.md：重写近期对话原文 + 追加摘要条目
+        # 同步传入 tool_call_args/tool_result/park_ts，让 park 工具调用本身
+        # 在 experience.md 中可见（_render_single_message 会 skip name=park_topic
+        # 的 tool 消息，必须由 update_experience 手动构造条目）。
+        update_experience(_current_actor, "park", {
+            "messages": [{"role": "system"}] * 3 + visible_msgs,
+            "visible_msgs": visible_msgs,
+            "summary_entry": summary_entry,
+            "tool_call_args": tool_call_args,
+            "tool_result": tool_result,
+            "park_ts": park_ts,
+        })
+
+        return tool_result
     except ValueError as e:
-        return f"[Error] {e}"
+        msg = str(e)
+        # 当没有新内容可归档时，明确告诉 LLM 不要重试
+        if "无新用户消息可归档" in msg or "全部已被压缩覆盖" in msg:
+            return (
+                f"[Error] {msg}\n"
+                "提示：当前没有可归档的新内容，所有未压缩的用户消息"
+                "均已被覆盖或处理。请直接告知用户该状态，**不要再次调用 park_topic**。"
+            )
+        return f"[Error] {msg}"
     except Exception as e:
         return f"[Error] {type(e).__name__}: {e}"
 
@@ -374,34 +437,45 @@ def _handle_recall_topic(arguments: dict) -> str:
     用户指令如「继续聊之前的话题」「回顾价值本质的讨论」时调用。
     返回续谈注入块，直接追加到上下文底部。
     """
+    from common.experience_core import update_experience
+    from character.summarizer import (
+        build_topics_context, recall_topic_by_label, recall_topic_by_id, )
+    from character.history import History
+
     topic_label = arguments.get("topic_label", "")
     topic_id = arguments.get("topic_id", "")
     show_list = arguments.get("list_all", False)
 
-    from character.summarizer import (
-        build_topics_context,
-        recall_topic_by_label,
-        recall_topic_by_id,
-    )
+    history = History(_current_actor).load()
+    history_messages = history.messages
 
     if show_list:
         return build_topics_context(_current_actor)
 
     if topic_id:
         try:
-            _, block = recall_topic_by_id(_current_actor, topic_id)
+            summary, block = recall_topic_by_id(_current_actor, topic_id)
+            # 更新 experience.md
+            update_experience(_current_actor, "recall", {
+                "topic_id": summary.id, "recall_block": block, })
             return block
         except ValueError as e:
             return f"[Error] {e}"
 
     if topic_label:
         try:
-            summary, block = recall_topic_by_label(_current_actor, topic_label)
+            summary, block = recall_topic_by_label(
+                _current_actor, topic_label
+            )
             label = summary.topic_label or summary.topic or "未命名"
+            # 更新 experience.md
+            update_experience(_current_actor, "recall", {
+                "topic_id": summary.id,
+                "recall_block": block,
+            })
             return (
                 f"[话题召回] 找到「{label}」（ID: {summary.id}）\n"
-                f"将以下内容注入上下文：\n\n"
-                f"{block}"
+                f"将以下内容注入上下文：\n\n{block}"
             )
         except ValueError as e:
             return f"[Error] {e}"
@@ -567,7 +641,7 @@ async def _handle_send_to_character(arguments: dict) -> str:
 
     from common.utils import set_display_name as _set_dn
 
-    _prev_actor = _current_actor
+    sender_name = _current_actor  # 保存发送者名称，用于后续写入发送者历史
     _set_dn(recipient)  # 终端显示名 → 接收者
     set_actor(recipient)  # _current_actor → 接收者（update_runtime/update_identity 操作正确目标）
 
@@ -620,15 +694,17 @@ async def _handle_send_to_character(arguments: dict) -> str:
                 _logger.info(
                     f"  [send_to_character] 自动切换 {recipient} → {recipient_provider}/{recipient_ipu_short}")
     finally:
-        set_actor(_prev_actor)  # 恢复 _current_actor
-        _set_dn(_prev_actor)  # 恢复终端显示名
+        set_actor(sender_name)  # 恢复 _current_actor
+        _set_dn(sender_name)  # 恢复终端显示名
     if not reply.strip():
         reply = "(未生成回复)"
 
-    # ── 5. 写入双方历史 ──
+    # ── 5. 写入发送者历史 ──
     # 发送者历史：完整记录发送+回复（不写空占位，避免异常残留）
-    if _current_actor != recipient:
-        sender_history = History(str(get_history_path(_current_actor))).load()
+    # 注意：send_to_character 后发送者的 experience.md 由 reason_action_loop
+    # 自然处理（下一轮 dump_experience 会写入），此处无需手动调用 dump_experience。
+    if sender_name != recipient:
+        sender_history = History(str(get_history_path(sender_name))).load()
         sender_history.append_pair(message, reply)
         sender_history.save()
 
@@ -636,6 +712,8 @@ async def _handle_send_to_character(arguments: dict) -> str:
     if recipient_history.messages and recipient_history.messages[-1].get("role") == "assistant":
         recipient_history.messages[-1]["content"] = reply
         recipient_history.save()
+        # 接收者的 experience.md 由 reason_action_loop 自然处理（最终回复时
+        # dump_experience 会正确写入），此处无需手动调用 dump_experience。
 
     return (
         f"🔔 {recipient} 无法看到你的普通回复——继续对话请调用 send_to_character\n\n"

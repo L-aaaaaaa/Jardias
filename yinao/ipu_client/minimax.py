@@ -1,4 +1,6 @@
 """MiniMax 智能基元供应商 (OpenAI-compatible)"""
+from __future__ import annotations
+
 from common.logger import logger
 from .common_client_util import (
     IPUConfig,
@@ -13,7 +15,8 @@ def _is_m3(ipu_config) -> bool:
 
 
 async def reason_action_chat(messages: list[dict], ipu_config=None,
-                              character_name: str = "") -> ChatResult:
+                              character_name: str = "",
+                              on_history_save: callable | None = None) -> ChatResult:
     if ipu_config is None:
         ipu_config = IPUConfig()
     logger.info(f"供应商 minimax | 智能基元={ipu_config.ipu} | 地址={ipu_config.base_url}")
@@ -36,4 +39,5 @@ async def reason_action_chat(messages: list[dict], ipu_config=None,
 
     return await reason_action_loop(messages, ipu_config,
                                      reasoning_field="reasoning_details",
-                                     character_name=character_name)
+                                     character_name=character_name,
+                                     on_history_save=on_history_save)

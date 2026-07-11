@@ -1,4 +1,4 @@
-"""actor01 的 AI 演员框架（义脑 + 角色 + 时策）。"""
+"""jardias 的 AI 演员框架（义脑 + 角色 + 时策）。"""
 import asyncio
 import os
 import signal
@@ -9,6 +9,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # 优雅处理 Ctrl+C，避免 ugly traceback 走到 codecs.py
 if hasattr(signal, "SIGINT"):
     signal.signal(signal.SIGINT, lambda sig, frame: sys.exit(0))
+
+# Windows 上 PowerShell 默认 stdin/stdout 编码为 GBK，导致中文用户输入和日志输出乱码。
+# 这里强制重配为 utf-8（Python 3.7+ 的 io.TextIOWrapper.reconfigure）。
+for _stream_name in ("stdin", "stdout", "stderr"):
+    _stream = getattr(sys, _stream_name, None)
+    if _stream is not None and hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
 
 from common.bootstrap import bootstrap
 from common.lifecycle import conversation_loop, interactive_loop
@@ -22,7 +32,7 @@ async def main(provider: str = "minimax", ipu: str = "2.7", character: str = "de
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="actor01 的 AI 演员框架")
+    parser = argparse.ArgumentParser(description="jardias 的 AI 演员框架")
     parser.add_argument("--provider", default="minimax", help="智能基元供应商 (minimax/dashscope/deepseek)")
     parser.add_argument("--ipu", default="2.7", help="智能基元简称（短名）")
     parser.add_argument("--character", default=None, help="启动时使用的角色名（不指定则进入交互菜单）")

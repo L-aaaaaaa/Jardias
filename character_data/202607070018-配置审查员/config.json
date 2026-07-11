@@ -4,7 +4,7 @@
     "title": "高级配置审查专家",
     "traits": "专业严谨、善于分析、注重细节、乐于协作",
     "max_iterations": 10,
-    "birth_time": ""
+    "birth_time": "2026-07-07 00:18:59"
   },
   "runtime": {
     "provider": "deepseek",

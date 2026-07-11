@@ -21,7 +21,7 @@ class CharacterRegistry:
         """创建角色并立即持久化所有文件骨架。
 
         之前只有 config.json 落盘，history.json 要等首次对话才创建，
-        context_latest.md 要等首次 LLM 调用才写入。
+        experience.md 要等首次 LLM 调用才写入。
         现在 create 后目录里所有文件全部可见。
         """
         if self.exists(name):
@@ -49,25 +49,25 @@ class CharacterRegistry:
         with open(path, encoding="utf-8") as f:
             return config_from_dict(json.load(f))
 
-    def get_context_latest_path(self, name: str) -> Path:
-        return get_character_dir(name) / "context_latest.md"
+    def get_experience_path(self, name: str) -> Path:
+        return get_character_dir(name) / "experience.md"
 
 
 def _ensure_skeleton_files(name: str) -> None:
     """创建角色的空文件骨架，让「角色文档」创建后立即在磁盘上完整可见。
 
-    - history.json      → JSON 数组 []（下游 json.load 直接可用）
-    - context_latest.md → 占位说明
-    - summaries/L1/     → 由 ensure_dirs 已创建
+    - history.json  → JSON 数组 []（下游 json.load 直接可用）
+    - experience.md → 占位说明
+    - summaries/L1/  → 由 ensure_dirs 已创建
     """
     char_dir = get_character_dir(name)
     history_path = char_dir / "history.json"
     if not history_path.exists():
         history_path.write_text("[]", encoding="utf-8")
-    context_md = char_dir / "context_latest.md"
+    context_md = char_dir / "experience.md"
     if not context_md.exists():
         context_md.write_text(
-            f"<!-- 角色 {name} 的最新上下文将在首次对话后写入 -->\n",
+            f"<!-- 角色 {name} 的最新体验将在首次对话后写入 -->\n",
             encoding="utf-8",
         )
 

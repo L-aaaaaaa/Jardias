@@ -1,4 +1,6 @@
 """DashScope Coding Plan 智能基元供应商 (OpenAI-compatible)"""
+from __future__ import annotations
+
 from common.logger import logger
 from .common_client_util import (
     IPUConfig,
@@ -8,7 +10,8 @@ from .common_client_util import (
 
 
 async def reason_action_chat(messages: list[dict], ipu_config=None,
-                              character_name: str = "") -> ChatResult:
+                              character_name: str = "",
+                              on_history_save: callable | None = None) -> ChatResult:
     if ipu_config is None:
         ipu_config = IPUConfig()
     if getattr(ipu_config, "thinking_enabled", None):
@@ -24,4 +27,5 @@ async def reason_action_chat(messages: list[dict], ipu_config=None,
 
     return await reason_action_loop(messages, ipu_config,
                                      reasoning_field="reasoning_content",
-                                     character_name=character_name)
+                                     character_name=character_name,
+                                     on_history_save=on_history_save)

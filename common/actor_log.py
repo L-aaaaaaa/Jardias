@@ -1,4 +1,4 @@
-"""Actor01 structured logging -- terminal + file output."""
+"""Jardias structured logging -- terminal + file output."""
 from __future__ import annotations
 
 import logging as _stdlib_logging
@@ -129,7 +129,7 @@ def format_api_ok(elapsed: float, usage: dict | None = None,
 # ══════════════════════════════════════════════════════════════
 
 def bootstrap_summary(history_msgs: int, provider: str, ipu: str, tool_count: int) -> None:
-    logger.info(f"Actor01 启动完成 -- 已加载 {history_msgs} 条历史记录，"
+    logger.info(f"Jardias 启动完成 -- 已加载 {history_msgs} 条历史记录，"
                 f"当前引擎 {provider}/{ipu}，可用工具 {tool_count} 个")
 
 

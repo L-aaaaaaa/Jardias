@@ -49,6 +49,7 @@ def _configure() -> None:
         retention="7 days",
         compression="zip",
         encoding="utf-8",
+        errors="replace",  # 关键：防止 surrogate codepoints 写入失败
         format="{time:YYYY-MM-DD HH:mm:ss} [{level.name}] {name}:{function} - {message}",
         backtrace=False,
         diagnose=True,

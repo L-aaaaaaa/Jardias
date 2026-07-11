@@ -38,16 +38,70 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
     retry = 0
     messages = None
     tried: set = {ctx.provider}
+
+    # ── 实时落盘：每次 LLM 中间产物直接追加到 history.messages 末尾 ──
+    # 设计原则：history.json 是 append-only,顺序 = 真实事件顺序。
+    # 因此 user 在 _run_turn 开头就由 form_full_context 同步追加到 history,
+    # 钩子接着按 messages 顺序追加中间过程(assistant(tc) + tool),
+    # _post_round 末尾再补 final_assistant。
+    # 这样 history 的物理顺序 = user → assistant(tc) → tool → ... → final_assistant。
+
     while retry < 5:
         if messages is None:
             messages = form_full_context(ctx.config, ctx.history.messages, user_input,
                 image_url=image_url, switch_note=switch_note,
                 round_context=round_context, character_name=ctx.character_name)
+            # ── 关键:把本轮 user 立即同步写入 history.messages,并立即落盘 ──
+            # 落盘的目的是:park_topic/recall_topic 工具被调时,如果它们直接
+            # json.load(history.json),必须能看到本轮 user。详见 _handle_park_topic
+            # 的 disk-race bug 修复记录。
+            ctx.history.append_user(user_input, ts=_dt.now().strftime("%Y-%m-%d %H:%M:%S"))
+            ctx.history.save()
         switch_note = None
         ctx.ipu_config.tools = tools.get_definitions()
         ctx.ipu_config.tool_choice = "auto"
+
+        # ── 实时落盘钩子:按 messages 顺序追加中间产物 ──
+        # processed_msg_idx 追踪本轮"已处理到的 messages 索引",
+        # 下次钩子触发时从该索引之后继续处理,避免重复追加。
+        # 与 _post_round 的分工:
+        #   - _run_turn 入口:追加本轮 user
+        #   - 本钩子负责中间过程:assistant_with_tool_calls + tool
+        #   - _post_round 负责收尾:final_assistant
+        processed_msg_idx = [3]  # 跳过 [system, state, history] 三层固定消息;messages[3] 是 user(已同步写入)
+
+        def _on_history_save():
+            """实时镜像:将 LLM 视角中"本轮新增的中间产物"追加到 ctx.history.messages 末尾。
+            跳过无 tool_calls 的 assistant(它是最终文本,由 _post_round 写入)。
+            立即落盘,确保 park_topic/recall_topic 工具被调时 disk 是最新的。
+            """
+            appended = False
+            for msg in messages[processed_msg_idx[0]:]:
+                role = msg.get("role")
+                if role == "tool":
+                    ctx.history.append_tool(
+                        tool_call_id=msg.get("tool_call_id", ""),
+                        name=msg.get("name", ""),
+                        content=msg.get("content", ""),
+                    )
+                    appended = True
+                elif role == "assistant" and msg.get("tool_calls"):
+                    ctx.history.append_assistant_msg(
+                        content=msg.get("content", ""),
+                        tool_calls=msg.get("tool_calls"),
+                    )
+                    appended = True
+                # 无 tool_calls 的 assistant(可能含 tool role 'user' 提示或 send_to_character 后注入)不追加,
+                # 全部由 _post_round 收尾处理。
+            processed_msg_idx[0] = len(messages)
+            # 落盘:后续 park_topic/recall_topic 工具必须能从 disk 读到本轮内容
+            if appended:
+                ctx.history.save()
+
         try:
-            result = await ctx.chat_fn(messages, ctx.ipu_config, character_name=ctx.character_name)
+            result = await ctx.chat_fn(messages, ctx.ipu_config,
+                                       character_name=ctx.character_name,
+                                       on_history_save=_on_history_save)
             if result.should_switch:
                 retry += 1
                 old_prov, old_ipu = ctx.config.runtime.provider, ctx.config.runtime.ipu
@@ -109,11 +163,10 @@ def _post_round(ctx, user_input: str, messages: list[dict], round_ok: bool = Tru
         reply = extract_reply(messages)
     else:
         reply = _build_failure_reply(ctx, messages)
-    if user_input.startswith("时策任务到期"):
-        if reply:
-            ctx.history.append_assistant(reply)
-    else:
-        ctx.history.append_pair(user_input, reply, ts=ts)
+    # _on_history_save 钩子已按 messages 顺序把中间产物追加到 ctx.history.messages 末尾。
+    # user 已在 _run_turn 入口(line 53 附近)同步写入。这里只追加 final_assistant 收尾。
+    if reply:
+        ctx.history.append_assistant(reply)
     ctx.history.save()
     ctx.config = load_config(ctx.character_name, config_dir=ctx.config_dir)
     sync_config_to_ipu(ctx.config, ctx.ipu_config)
@@ -128,6 +181,8 @@ def _build_failure_reply(ctx, messages):
 
 async def _post_round_async(ctx, user_input, messages, round_ok=True, ts=None):
     _post_round(ctx, user_input, messages, round_ok, ts=ts)
+    from yinao.ipu_client.common_client_util import dump_experience
+    dump_experience(ctx.character_name, None)
     await check_and_compress(ctx.character_name, ctx.history.messages)
 
 
@@ -355,12 +410,30 @@ async def _process_triggers(ctx, snapshot: list[str]):
         turn_ts = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
         round_ok, messages = await _run_turn(ctx, user_input, None, None, "")
         reply = extract_reply(messages) if round_ok else ""
+        # 与 _post_round 一致:先追加本轮中间产物,再追加 user,最后 final_assistant
+        for msg in getattr(ctx, "_round_added", []) or []:
+            role = msg.get("role")
+            if role == "tool":
+                ctx.history.append_tool(
+                    tool_call_id=msg.get("tool_call_id", ""),
+                    name=msg.get("name", ""),
+                    content=msg.get("content", ""),
+                )
+            elif role == "assistant" and msg.get("tool_calls"):
+                ctx.history.append_assistant_msg(
+                    content=msg.get("content", ""),
+                    tool_calls=msg.get("tool_calls"),
+                )
+        ctx._round_added = []
+        # 时策触发时 user_input 也需写入 history(主流程 _post_round 写的是 stdin 输入)
+        if user_input:
+            ctx.history.append_user(user_input, ts=turn_ts)
         if reply:
             ctx.history.append_assistant(reply)
-            ctx.history.save()
-            ctx.config = load_config(ctx.character_name, config_dir=ctx.config_dir)
-            sync_config_to_ipu(ctx.config, ctx.ipu_config)
-            ctx.turn_num += 1
+        ctx.history.save()
+        ctx.config = load_config(ctx.character_name, config_dir=ctx.config_dir)
+        sync_config_to_ipu(ctx.config, ctx.ipu_config)
+        ctx.turn_num += 1
 
 
 async def conversation_loop(ctx, allow_switch: bool = False):

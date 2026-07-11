@@ -70,7 +70,8 @@ async def _summarize_conversation(conversation_text: str) -> dict:
             "## 提炼要求\n"
             "1. topic_label：给这个话题起一个 10 字以内的标签（如「价值本质」「电影推荐」「项目架构」），\n"
             "   优先使用对话中已出现的关键词\n"
-            "2. people：从对话中识别所有提及的人名/角色名，返回这些人名列表；无特定人物则返回空数组\n"
+            "2. people：**只识别对话中直接参与发言的角色名**（通过 send_to_character 调用的目标角色、或对话对象）；"
+            "对话中**被提及**但不是直接参与者的角色不应写入（如「像之前和 XX 讨论时那样」这类引用不算）。返回这些角色名列表；无特定人物则返回空数组\n"
             "3. summary：用 2-4 句话综合这段对话的核心结论，不要复述细节，要提炼洞察\n"
             "4. key_points：列出 2-5 个关键观点，每个 20 字以内，用中文句号结尾\n\n"
             "## 正确示例\n"
@@ -468,14 +469,26 @@ async def park_topic(character_name: str, messages: list[dict],
     if people is None:
         people = []
 
-    # 找到最近 lookback_turns 轮用户消息的起始位置
-    user_indices = [i for i, m in enumerate(messages) if m["role"] == "user"]
+    # 找到最近 lookback_turns 轮未被压缩覆盖的用户消息
+    try:
+        comp_log = load_compression_log(character_name)
+    except Exception:
+        comp_log = []
+    user_indices = [i for i, m in enumerate(messages) if not _is_msg_covered(i, comp_log) and m["role"] == "user"]
     if not user_indices:
-        raise ValueError("无用户消息，无法归档")
-
-    # 取最近 lookback_turns 轮
+        raise ValueError("无新用户消息可归档（全部已被压缩覆盖）")
     recent_user_indices = user_indices[-lookback_turns:]
     abs_from = recent_user_indices[0]
+    # 关键修复：head-gap（前导孤儿工具调用）
+    try:
+        last_covered = max((rec.get("abs_to", -1) for rec in comp_log), default=-1)
+        uncovered = [i for i in range(len(messages)) if not _is_msg_covered(i, comp_log)]
+        if uncovered and uncovered[0] < abs_from:
+            abs_from = uncovered[0]
+        if last_covered + 1 < abs_from:
+            abs_from = last_covered + 1
+    except Exception:
+        pass
     # to 取这轮用户的 assistant 回复为止
     abs_to = user_indices[-1]
     if abs_to + 1 < len(messages):
@@ -501,6 +514,18 @@ async def park_topic(character_name: str, messages: list[dict],
         resolved_people = people or result.get("people", [])
         summary_text = result.get("summary", "")
         key_points = result.get("key_points", [])
+
+        # 代码层兜底：people 字段必须基于工具调用 ground truth,
+        # 不能完全相信 LLM。如果 LLM 返回了 ground truth 中不存在的角色,
+        # 用 ground truth 过滤,避免误把无关角色写入摘要。
+        if not people:
+            ground_truth_chars = _extract_send_to_character_targets(slice_)
+            if ground_truth_chars:
+                # 优先保留 ground truth 中的角色;LLM 返回的如果不在 ground truth 中,丢弃
+                resolved_people = [p for p in resolved_people if p in ground_truth_chars]
+                # 如果过滤后为空,使用 ground truth
+                if not resolved_people:
+                    resolved_people = ground_truth_chars
 
         # 构造单 segment
         segment = {
@@ -603,27 +628,59 @@ def build_topics_context(character_name: str,
 
 def recall_topic_by_label(character_name: str,
                             topic_label: str) -> tuple[L1Summary, str]:
-    """根据话题标签查找最匹配的已归档摘要，并生成续谈注入块。
+    """根据话题标签查找最匹配的已归档摘要,并生成续谈注入块。
 
     Returns:
         (匹配的摘要, 续谈注入字符串)
+
+    修复:同一标签可能有多条 manual 归档(覆盖/扩展时多次归档),
+    召回时按时间倒序优先取最新且标签完全匹配的一条,避免早期
+    buggy 的窄范围 L1 阻挡后续正确的全范围 L1。
     """
     summaries = load_all_l1(character_name)
-    # 优先找 manual 归档，再找 auto
-    candidates = sorted(summaries,
-                        key=lambda s: (0 if s.source == "manual" else 1))
+    # 优先找 manual 归档。同一标签可能有多条 manual L1(扩展归档等),
+    # 召回时优先取最新创建的那条(按文件名倒序),排除早期 buggy 的窄范围 L1。
+    candidates = sorted(summaries, key=lambda s: (0 if s.source == "manual" else 1))
+    # manual 内部按 ID(文件名)倒序 → 最新创建优先
+    manual = [s for s in candidates if s.source == "manual"]
+    auto = [s for s in candidates if s.source != "manual"]
+    manual_sorted = sorted(manual, key=lambda s: s.id, reverse=True)
 
     matched = None
-    for s in reversed(candidates):
+    # 第一轮:精确匹配按时间倒序
+    for s in manual_sorted:
         label = s.topic_label or s.topic or ""
-        if topic_label.lower() in label.lower() or label.lower() in topic_label.lower():
+        if label.lower() == topic_label.lower():
             matched = s
             break
+    if not matched and auto:
+        auto_sorted = sorted(auto, key=lambda s: s.id, reverse=True)
+        for s in auto_sorted:
+            label = s.topic_label or s.topic or ""
+            if label.lower() == topic_label.lower():
+                matched = s
+                break
+    # 第二轮:子串匹配(manual 按倒序)
+    if not matched:
+        for s in manual_sorted:
+            label = s.topic_label or s.topic or ""
+            if (topic_label.lower() in label.lower()
+                    or label.lower() in topic_label.lower()):
+                matched = s
+                break
+    if not matched and auto:
+        auto_sorted = sorted(auto, key=lambda s: s.id, reverse=True)
+        for s in auto_sorted:
+            label = s.topic_label or s.topic or ""
+            if (topic_label.lower() in label.lower()
+                    or label.lower() in topic_label.lower()):
+                matched = s
+                break
 
     if not matched:
         raise ValueError(f"未找到话题「{topic_label}」的归档记录")
 
-    return matched, _build_recall_block(matched)
+    return matched, _build_recall_block(character_name, matched)
 
 
 def recall_topic_by_id(character_name: str,
@@ -632,11 +689,11 @@ def recall_topic_by_id(character_name: str,
     summaries = load_all_l1(character_name)
     for s in summaries:
         if s.id == topic_id:
-            return s, _build_recall_block(s)
+            return s, _build_recall_block(character_name, s)
     raise ValueError(f"未找到 ID 为 {topic_id} 的归档记录")
 
 
-def _build_recall_block(s: L1Summary) -> str:
+def _build_recall_block(character_name: str, s: L1Summary) -> str:
     """为已匹配的摘要生成续谈注入块。
 
     格式：
@@ -652,6 +709,9 @@ def _build_recall_block(s: L1Summary) -> str:
 
     ### 原始讨论位置
     history.json [msg_from:msg_to]
+
+    ### 原始对话内容
+    [msg:N][role]: ... (按 msg_indices 范围从 history.json 加载)
     """
     label = s.topic_label or s.topic or "未命名话题"
     time_range = f"{s.start_time[:19] if s.start_time else '?'} ~ {s.end_time[:19] if s.end_time else '?'}"
@@ -693,7 +753,68 @@ def _build_recall_block(s: L1Summary) -> str:
             seg = s.summary[-1]
             parts.append(f"[轮次 {seg.get('from', '?')} ~ {seg.get('to', '?')}]")
 
+    # ── 原始对话内容(Bug Fix: 必须把对话原文也注入,否则 agent 只能拿到摘要) ──
+    abs_from_a, abs_to_a = (None, None)
+    if s.msg_indices != (0, 0):
+        abs_from_a, abs_to_a = s.msg_indices
+    abs_from_b, abs_to_b = (None, None)
+    if s.summary:
+        seg = s.summary[-1]
+        abs_from_b = int(seg.get("from", 0) or 0)
+        abs_to_b = int(seg.get("to", 0) or 0)
+
+    if abs_from_a is None and abs_from_b is None:
+        return "\n".join(parts)
+
+    abs_from = min(x for x in [abs_from_a, abs_from_b] if x is not None)
+    abs_to = max(x for x in [abs_to_a, abs_to_b] if x is not None)
+
+    if abs_to >= abs_from:
+        original_msgs = _load_original_messages(character_name, abs_from, abs_to)
+        if original_msgs:
+            parts.append("")
+            parts.append("### 原始对话内容")
+            # 复用 _build_conversation_text 以 [msg:N][role] 格式注入,绝对索引
+            conv_text = _build_conversation_text(
+                original_msgs,
+                max_chars=8000,
+                abs_start=abs_from,
+            )
+            parts.append(conv_text)
+
     return "\n".join(parts)
+
+
+def _load_original_messages(character_name: str,
+                              abs_from: int, abs_to: int) -> list[dict]:
+    """从角色 history.json 加载 [abs_from, abs_to] 索引范围的原文。
+
+    找不到文件 / 索引越界时回退到空列表(留给调用方降级)。
+    """
+    try:
+        from . import get_history_path
+        from .history import History
+    except ImportError:
+        try:
+            from character import get_history_path
+            from character.history import History
+        except ImportError:
+            return []
+
+    hp = get_history_path(character_name)
+    if not hp.exists():
+        return []
+    try:
+        msgs = History(str(hp)).load().messages
+    except Exception:
+        return []
+    if abs_from < 0:
+        abs_from = 0
+    if abs_to >= len(msgs):
+        abs_to = len(msgs) - 1
+    if abs_from > abs_to:
+        return []
+    return msgs[abs_from:abs_to + 1] 
 
 
 # ═══════════════════════════════════════════════════════
@@ -767,6 +888,37 @@ def append_compression_record(character_name: str,
 MAX_L1_IN_CONTEXT = 5
 
 
+def _extract_send_to_character_targets(messages: list[dict]) -> list[str]:
+    """从消息列表中提取所有 send_to_character 调用的目标角色名。
+
+    用于 park_topic 的代码层兜底：people 字段应该基于工具调用的
+    ground truth,而不是依赖 LLM 的自由识别。
+
+    Returns:
+        去重后的角色名列表(按首次出现顺序)
+    """
+    targets = []
+    seen = set()
+    for m in messages:
+        if m.get("role") != "assistant":
+            continue
+        tc = m.get("tool_calls") or []
+        for fn in tc:
+            if fn.get("function", {}).get("name") != "send_to_character":
+                continue
+            args = fn["function"].get("arguments", {})
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except Exception:
+                    continue
+            to = (args or {}).get("to", "").strip()
+            if to and to not in seen:
+                seen.add(to)
+                targets.append(to)
+    return targets
+
+
 def _is_msg_covered(msg_idx: int, log: list[dict]) -> bool:
     """给定消息索引，检查它是否落在某个已被压缩的段内。"""
     for rec in log:
@@ -776,10 +928,19 @@ def _is_msg_covered(msg_idx: int, log: list[dict]) -> bool:
 
 
 def _covered_ranges(log: list[dict]) -> list[tuple[int, int]]:
-    """返回所有已压缩段的范围列表（按 abs_from 排序）。"""
+    """返回所有已压缩段的范围列表（按 abs_from 排序，合并重叠/相邻）。"""
     ranges = [(r["abs_from"], r["abs_to"]) for r in log]
     ranges.sort(key=lambda x: x[0])
-    return ranges
+    if not ranges:
+        return ranges
+    merged = [list(ranges[0])]
+    for f, t in ranges[1:]:
+        if f <= merged[-1][1] + 1:
+            if t > merged[-1][1]:
+                merged[-1][1] = t
+        else:
+            merged.append([f, t])
+    return [tuple(r) for r in merged]
 
 
 def _gaps_between_covered(total: int, log: list[dict]) -> list[tuple[int, int]]:
