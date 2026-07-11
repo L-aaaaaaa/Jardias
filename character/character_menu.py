@@ -92,7 +92,7 @@ def select_or_create_character() -> tuple[str, str, str] | None:
             elif prompt_choice == "3":
                 system_prompt = input("请输入自定义系统提示: ").strip()
             else:
-                system_prompt = "你是一个智能助手，名字叫 #{character_name}。"
+                system_prompt = "你是一个智能体角色，名字叫 #{character_name}。"
 
             # ── 动态引擎选择（从 providers.json5 自动同步）──
             engine_display, engine_map = _build_engine_menu()
