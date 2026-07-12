@@ -36,6 +36,8 @@ class History:
 
     def save(self):
         try:
+            # 确保父目录存在（default 角色目录可能未显式创建）。
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
             json.dump(
                 self.messages,
                 open(self.path, "w", encoding="utf-8"),

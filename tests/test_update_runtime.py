@@ -16,7 +16,7 @@ from pydantic import ValidationError
 
 from data_shape.update_args import UpdateRuntimeArgs
 from tool.builtin import (
-    _format_validation_error_from_pydantic,
+    _format_validation_error as _format_validation_error_from_pydantic,
     _handle_update_runtime,
 )
 
@@ -239,6 +239,9 @@ class TestApplyField:
             top_p = 0.95
             max_icp = 2048
             thinking_mode = "auto"
+            reasoning_effort = "high"
+            thinking_enabled = True
+            ipu = "2.7"
         return _RT()
 
     def test_field_not_set_skipped(self):
