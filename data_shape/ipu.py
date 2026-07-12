@@ -24,6 +24,6 @@ class IPUProviderConfig(BaseModel):
 
 
 class IPUConfigFile(BaseModel):
-    """整份 providers.json5 的类型化结构。"""
+    """整份 providers.json 的类型化结构。"""
     version: int = 1
     providers: list[IPUProviderConfig] = Field(default_factory=list)

@@ -26,8 +26,7 @@ each governed by its own license terms:
   multi-provider model clients under yinao/ipu_client/.
   https://github.com/openai/openai-python
 
-- loguru (MIT License) — colored terminal logging and rotating file
-  logging under common/logger.py.
+
   https://github.com/Delgan/loguru
 
 - pydantic (MIT License) — data shape validation under data_shape/.

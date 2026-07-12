@@ -1,5 +1,5 @@
 """
-@llm_tool — 旁路小模型调用框架
+@actor_tool — 角色侧旁路小模型调用框架
 
 与普通 @tool 的关键区别：
 - 固定 pipeline：单次 API 调用，不允许 tool chain
@@ -16,13 +16,13 @@ _registry: dict[str, dict] = {}
 _executor: Callable | None = None
 
 
-def set_llm_executor(fn: Callable):
+def set_actor_executor(fn: Callable):
     """注入 API 执行器（由 app.py 在启动时调用）。"""
     global _executor
     _executor = fn
 
 
-def llm_tool(
+def actor_tool(
     *,
     ipu: str,
     output_schema: dict[str, str],
@@ -33,7 +33,7 @@ def llm_tool(
     调用时 → 组 system + user prompt → 单次 API → JSON 解析 → 返回 dict。
 
     示例:
-        @llm_tool(
+        @actor_tool(
             ipu="qwen-turbo",
             output_schema={"topic": "str", "detail": "str"},
             system="你是对话摘要器。输出 JSON。"
@@ -53,8 +53,8 @@ def llm_tool(
         async def wrapper(**kwargs) -> dict:
             if not _executor:
                 raise RuntimeError(
-                    f"@llm_tool '{name}' called before executor is set. "
-                    "Call set_llm_executor() at startup."
+                    f"@actor_tool '{name}' called before executor is set. "
+                    "Call set_actor_executor() at startup."
                 )
             user_text = "\n".join(f"{k}:\n{v}" for k, v in kwargs.items())
             return await _executor(
@@ -70,6 +70,6 @@ def llm_tool(
     return decorator
 
 
-def list_llm_tools() -> dict[str, dict]:
-    """返回已注册的 @llm_tool 列表（名称 → 元数据）。"""
+def list_actor_tools() -> dict[str, dict]:
+    """返回已注册的 @actor_tool 列表（名称 → 元数据）。"""
     return dict(_registry)

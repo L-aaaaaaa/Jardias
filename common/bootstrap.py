@@ -110,14 +110,14 @@ def bootstrap(provider: str, ipu: str, character_name: str = "default"):
     tool_defs = tools.get_definitions()
     bootstrap_summary(len(ctx.history.messages), ctx.provider, ctx.ipu, len(tool_defs))
 
-    _setup_llm_executor(ctx)
+    _setup_actor_executor(ctx)
     _setup_scheduler(ctx)
     return ctx
 
 
-def _setup_llm_executor(ctx):
-    """创建并注入 @llm_tool 旁路小模型执行器（支持跨 provider 模型路由）。"""
-    from tool.llm_tool import set_llm_executor
+def _setup_actor_executor(ctx):
+    """创建并注入 @actor_tool 旁路小模型执行器（支持跨 provider 模型路由）。"""
+    from tool.actor_tool import set_actor_executor
     from yinao.ipu_client.common_client_util import form_client
     from yinao.provider_manager import provider_manager
     from yinao.ipu_client import _next_provider, _pick_fallback_ipu
@@ -270,7 +270,7 @@ def _setup_llm_executor(ctx):
             f"Last error: {type(last_error).__name__}: {last_error}"
         )
 
-    set_llm_executor(execute)
+    set_actor_executor(execute)
     logger.info(f"  [LLM-TOOL] executor ready | provider={ctx.provider} | base={ctx.ipu_config.base_url}")
 
 

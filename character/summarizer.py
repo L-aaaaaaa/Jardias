@@ -9,7 +9,7 @@ from pathlib import Path
 
 from common.logger import logger
 from data_shape import L1Summary
-from tool.llm_tool import llm_tool
+from tool.actor_tool import actor_tool
 from . import get_summaries_dir, get_compression_log_path
 
 
@@ -17,7 +17,7 @@ from . import get_summaries_dir, get_compression_log_path
 # LLM 工具：阈值压缩用的对话分段
 # ═══════════════════════════════════════════════════════
 
-@llm_tool(
+@actor_tool(
     ipu="v4-flash",
     output_schema={
         "segments": "array of {from_msg: int, to_msg: int, topic: string, detail: string}"
@@ -49,7 +49,7 @@ from . import get_summaries_dir, get_compression_log_path
     ),
 )
 async def _summarize_conversation(conversation_text: str) -> dict:
-    """Auto-invoked by @llm_tool — 返回 {"segments": [{from_msg, to_msg, topic, detail}, ...]}"""
+    """Auto-invoked by @actor_tool — 返回 {"segments": [{from_msg, to_msg, topic, detail}, ...]}"""
     pass
 
 
@@ -57,7 +57,7 @@ async def _summarize_conversation(conversation_text: str) -> dict:
 # LLM 工具：话题归档（用户主动触发）
 # ═══════════════════════════════════════════════════════
 
-@llm_tool(
+@actor_tool(
     ipu="v4-flash",
     output_schema={
         "topic_label": "string",
@@ -86,7 +86,7 @@ async def _summarize_conversation(conversation_text: str) -> dict:
     ),
 )
 async def _summarize_topic(conversation_text: str) -> dict:
-    """Auto-invoked by @llm_tool — 返回 {topic_label, people, summary, key_points}"""
+    """Auto-invoked by @actor_tool — 返回 {topic_label, people, summary, key_points}"""
     pass
 
 

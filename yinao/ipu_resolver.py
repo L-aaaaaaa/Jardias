@@ -1,8 +1,8 @@
 """
-ipu_resolver.py — 智能基元（IPU）解析（数据源：provider_manager → providers.json5）
+ipu_resolver.py — 智能基元（IPU）解析（数据源：provider_manager → providers.json）
 
 功能：
-- 从 providers.json5 派生智能基元注册表与能力映射
+- 从 providers.json 派生智能基元注册表与能力映射
 - 提供 choose_ipu / choose_ipu_provider / resolve_ipu 三个查询入口
 """
 import os

@@ -33,7 +33,7 @@ def single_completion(
         temperature: float = 0.0,
         max_icp: int = 512,
 ) -> str:
-    """非流式单次 API 调用，返回纯文本（@llm_tool 用）。
+    """非流式单次 API 调用，返回纯文本（@actor_tool 用）。
 
     API 协议层仍使用 max_completion_tokens / model，IPU 抽象层用 max_icp / ipu。
     """

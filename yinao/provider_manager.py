@@ -1,10 +1,10 @@
 """
-provider_manager.py — 智能基元注册中心：读写 providers.json5 + 热重载。
+provider_manager.py — 智能基元注册中心：读写 providers.json + 热重载。
 
 数据形状来自 data_shape.ipu：
   IPUEntry / IPUProviderConfig / IPUConfigFile
 
-旧字段名兼容：providers.json5 文件中仍允许使用 "models" 键（自动转为 "ipus"）。
+旧字段名兼容：providers.json 文件中仍允许使用 "models" 键（自动转为 "ipus"）。
 """
 from __future__ import annotations
 
@@ -15,11 +15,9 @@ import time
 from pathlib import Path
 from typing import Dict, Optional, Any
 
-import json5
-
 from data_shape import IPUEntry, IPUProviderConfig, IPUConfigFile
 
-_DEFAULT_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "providers.json5")
+_DEFAULT_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "providers.json")
 
 
 def _coerce_ipu_entry(v: Any) -> dict:
@@ -64,7 +62,7 @@ class IPURegistry:
                 self._providers = IPUConfigFile()
                 self._save_nolock(self._providers)
             else:
-                data = json5.loads(self.config_path.read_text(encoding="utf-8"))
+                data = json.loads(self.config_path.read_text(encoding="utf-8"))
                 if "providers" in data:
                     data["providers"] = [_coerce_provider_ipus(p) for p in data["providers"]]
                 self._providers = IPUConfigFile(**data)
@@ -73,7 +71,7 @@ class IPURegistry:
     def reload(self) -> IPUConfigFile:
         """强制重新从文件读取"""
         with self._lock:
-            data = json5.loads(self.config_path.read_text(encoding="utf-8"))
+            data = json.loads(self.config_path.read_text(encoding="utf-8"))
             if "providers" in data:
                 data["providers"] = [_coerce_provider_ipus(p) for p in data["providers"]]
             self._providers = IPUConfigFile(**data)

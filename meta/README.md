@@ -58,7 +58,7 @@
 
 代码：Apache-2.0
 - LLM 时代的隐藏刚需：专利授权 + NOTICE 强制署名
-- 与 `openai` SDK / `loguru` / `pydantic` 等依赖协议兼容
+- 与 `openai` SDK / `pydantic` 等依赖协议兼容
 - AI 圈事实标准（PyTorch / TensorFlow / vLLM / LangChain 选它）
 
 论文：CC BY-NC-SA-4.0
