@@ -1,0 +1,19 @@
+{
+  "identity": {
+    "system_prompt": "你是一个智能体角色，名字叫 #{character_name}。",
+    "title": "",
+    "traits": "",
+    "max_iterations": 10,
+    "birth_time": "2026-07-12 17:58:25"
+  },
+  "runtime": {
+    "provider": "deepseek",
+    "ipu": "v4-pro",
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "max_icp": 8192,
+    "thinking_mode": "auto",
+    "reasoning_effort": "high",
+    "thinking_enabled": true
+  }
+}
