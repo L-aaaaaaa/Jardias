@@ -14,8 +14,19 @@ def _log():
     return logger
 
 
+def _format_error(e: BaseException) -> str:
+    """统一异常 → "[Error] TypeName: msg" 字符串格式。
+
+    所有 builtin handler 都用同一格式，便于 LLM 与日志解析。
+    """
+    return f"[Error] {type(e).__name__}: {e}"
+
+
 # ── 工具执行调度表（延迟赋值，避免循环导入）──
 _BUILTIN_HANDLERS: dict[str, callable] = {}
+FILE_TOOLS: list[ToolDef] = []
+_tools_built = False
+_current_actor: str = "default"  # ── 当前操作的 actor名（由 app.py 设定） ──
 
 
 class ToolRegistry:
@@ -69,16 +80,16 @@ class ToolRegistry:
                 return f"[Error] missing required param: {missing}"
             return f"[Error] {e}"
         except Exception as e:
-            return f"[Error] {type(e).__name__}: {e}"
+            return _format_error(e)
 
     def register_file_tools(self):
-        _ensure_tools()
-        for tool_def in FILE_TOOLS:
-            self.register(tool_def)
-
-
-# ── 当前操作的 actor名（由 app.py 设定） ──
-_current_actor: str = "default"
+        # 构建 FILE_TOOLS 表。仅首次构建，后续幂等。
+        global _tools_built, FILE_TOOLS
+        if _tools_built: return
+        from .metadata import build_tool_defs
+        FILE_TOOLS = build_tool_defs()
+        _tools_built = True
+        for tool_def in FILE_TOOLS: self.register(tool_def)
 
 
 def set_actor(name: str):
@@ -95,145 +106,154 @@ def _handle_update_runtime(arguments: dict) -> str:
     其他参数 → 直接写 JSON，下轮生效。
     """
     from character.config_io import load_config, save_config
-    from yinao.ipu_client.ipu_context import resolve_ipu_provider, get_active_ipu, is_provider_available, \
-        get_circuit_status
+    from data_shape import UpdateRuntimeArgs
+    from yinao.ipu_client.ipu_context import (resolve_ipu_provider, get_active_ipu, is_provider_available, request_switch)
 
-    config = load_config(_current_actor)
-    rt = config.runtime
+    # ── 解析参数（pydantic 自动做类型/范围/枚举校验）──
+    try: args = UpdateRuntimeArgs(**(arguments or {}))
+    except Exception as e: return _format_validation_error_from_pydantic(e, "update_runtime")  # pydantic ValidationError 单字段是嵌套结构，展平成 LLM 友好字符串
+
+    config = load_config(_current_actor); rt = config.runtime
     actual_ipu = get_active_ipu()  # 实际运行引擎（fallback 后可能与文件不同）
+    changes: list[str] = []; ipu_changed = False
 
-    changes = []
-    ipu_changed = False
+    # ── ipu 切换（含熔断检查）──
+    if args.has("ipu") and (args.ipu != rt.ipu or (actual_ipu and args.ipu != actual_ipu)):
+        provider = resolve_ipu_provider(args.ipu)
+        if provider and not is_provider_available(provider): return _format_circuit_error(provider)
+        ipu_changed = _apply_field(args, rt, "ipu", changes)
 
-    if "ipu" in arguments:
-        new_ipu = arguments["ipu"]
-        # 比较 config 文件 AND 实际运行状态（fallback 可能未持久化）
-        if new_ipu != rt.ipu or (actual_ipu and new_ipu != actual_ipu):
-            # 切换前检查目标供应商是否已熔断
-            provider = resolve_ipu_provider(new_ipu)
-            if provider and not is_provider_available(provider):
-                status = get_circuit_status().get(provider, {})
-                remain = status.get("reset_remaining_sec", "?")
-                last_err = status.get("last_error", "")
-                # 格式化所有供应商状态（LLM 友好）
-                all_status = get_circuit_status()
-                status_lines = []
-                for p, s in all_status.items():
-                    label = "🟢" if s.get("available", True) else "🔴"
-                    extra = ""
-                    if not s.get("available", True):
-                        extra = f" (熔断, {s.get('reset_remaining_sec', '?')}s 后恢复)"
-                    status_lines.append(f"  {label} {p}{extra}")
-                formatted_status = "\n".join(status_lines) if status_lines else "  (无状态)"
-                return (
-                    f"[Error] {provider} 当前不可用（已熔断，{remain}s 后自动恢复）。\n"
-                    f"原因: {last_err}\n"
-                    f"当前供应商状态:\n{formatted_status}"
-                )
-            rt.ipu = new_ipu
-            changes.append(f"ipu={new_ipu}")
-            ipu_changed = True
+    # ── 范围/枚举校验已在 pydantic 完成，下面只做赋值 + 互斥处理 ──
+    # 关键：每字段都要 if args.has(...) 包裹，因为 dataclass 的 None 默认值
+    # 与"用户没传"语义不同（temperature=0 / max_icp=512 都是合法零值，
+    # 不能和"LLM 没提供"混淆）。args.has(field) 区分两种情况。
 
-    if "temperature" in arguments:
-        t = float(arguments["temperature"])
-        if t < 0 or t > 2:
-            return f"[Error] temperature must be in [0, 2], got {t}"
-        rt.temperature = t
-        changes.append(f"temperature={t}")
+    # 无副作用的纯赋值字段走 _apply_field；互斥逻辑里清空/开启也走 helper（传 value/log_value）。
+    _apply_field(args, rt, "temperature", changes)
+    _apply_field(args, rt, "top_p", changes)
+    _apply_field(args, rt, "max_icp", changes)
 
-    if "top_p" in arguments:
-        p = float(arguments["top_p"])
-        if p < 0 or p > 1:
-            return f"[Error] top_p must be in [0, 1], got {p}"
-        rt.top_p = p
-        changes.append(f"top_p={p}")
+    # thinking_enabled: 关闭时清空 reasoning_effort（DeepSeek 400 防呆）
+    if args.has("thinking_enabled"):
+        _apply_field(args, rt, "thinking_enabled", changes)
+        if not args.thinking_enabled and rt.reasoning_effort:
+            old = rt.reasoning_effort
+            _apply_field(args, rt, "reasoning_effort", changes, value="",
+                         log_value=f"reasoning_effort=(自动清除 {old}，关闭 thinking 时不可设 reasoning_effort)")
 
-    if "max_icp" in arguments:
-        n = int(arguments["max_icp"])
-        if n <= 0:
-            return f"[Error] max_icp must be positive, got {n}"
-        rt.max_icp = n
-        changes.append(f"max_icp={n}")
+    # reasoning_effort: 开启时自动开 thinking（DeepSeek 400 防呆）
+    if args.has("reasoning_effort") and not rt.thinking_enabled:
+        _apply_field(args, rt, "thinking_enabled", changes, value=True,
+                     log_value="thinking_enabled=(自动开启，reasoning_effort 需 thinking 支持)")
+    _apply_field(args, rt, "reasoning_effort", changes)
 
-    if "thinking_enabled" in arguments:
-        enabled = bool(arguments["thinking_enabled"])
-        rt.thinking_enabled = enabled
-        changes.append(f"thinking_enabled={enabled}")
-        if not enabled and rt.reasoning_effort:
-            # DeepSeek: thinking=disabled 时不能传 reasoning_effort，否则 400
-            old_effort = rt.reasoning_effort
-            rt.reasoning_effort = ""
-            changes.append(f"reasoning_effort=(自动清除 {old_effort}，关闭 thinking 时不可设 reasoning_effort)")
+    _apply_field(args, rt, "thinking_mode", changes)
 
-    if "reasoning_effort" in arguments:
-        effort = arguments["reasoning_effort"].lower()
-        if effort not in ("high", "max"):
-            return f"[Error] reasoning_effort must be high/max, got {effort}"
-        if not rt.thinking_enabled:
-            # DeepSeek: 设 reasoning_effort 必须开 thinking，否则 400
-            rt.thinking_enabled = True
-            changes.append("thinking_enabled=(自动开启，reasoning_effort 需 thinking 支持)")
-        rt.reasoning_effort = effort
-        changes.append(f"reasoning_effort={effort}")
-
-    if "thinking_mode" in arguments:
-        mode = arguments["thinking_mode"].lower()
-        if mode not in ("enabled", "disabled", "auto"):
-            return f"[Error] thinking_mode must be enabled/disabled/auto, got {mode}"
-        rt.thinking_mode = mode
-        changes.append(f"thinking_mode={mode}")
-
-    if not changes:
-        return "[OK] no changes (all values match current)"
-
+    if not changes: return "[OK] no changes (all values match current)"
     save_config(config, _current_actor)
+    if not ipu_changed: return f"[OK] runtime updated: {', '.join(changes)}"
 
-    if ipu_changed:
-        provider = resolve_ipu_provider(rt.ipu)
-        if provider is None:
-            return f"[Error] 无法解析智能基元 '{rt.ipu}' 的 provider。可用智能基元: 2.7快, 2.7, chat, 千问3.6+, kimi 2.5, glm-5, M2.5"
-        if rt.ipu == provider:
-            from yinao import IPU_REGISTRY
-            first_ipu = next(iter(IPU_REGISTRY[provider].keys()))
-            rt.ipu = first_ipu
-        rt.provider = provider
-        save_config(config, _current_actor)
-        from yinao.ipu_client.ipu_context import request_switch
-        request_switch(provider, rt.ipu)
-        return f"[OK] runtime updated: {', '.join(changes)} → 将切换至 {provider}/{rt.ipu}"
+    provider = resolve_ipu_provider(rt.ipu)
+    if provider is None: return f"[Error] 无法解析智能基元 '{rt.ipu}' 的 provider。可用智能基元: 2.7快, 2.7, chat, 千问3.6+, kimi 2.5, glm-5, M2.5"
+    if rt.ipu == provider:
+        from yinao import IPU_REGISTRY
+        rt.ipu = next(iter(IPU_REGISTRY[provider].keys()))
+    rt.provider = provider; save_config(config, _current_actor)
+    request_switch(provider, rt.ipu)
+    return f"[OK] runtime updated: {', '.join(changes)} → 将切换至 {provider}/{rt.ipu}"
 
-    return f"[OK] runtime updated: {', '.join(changes)}"
+
+def _format_validation_error_from_pydantic(exc: Exception, tool_name: str) -> str:
+    """pydantic ValidationError → [Error] field: detail 字符串列表（LLM 友好）。"""
+    details = getattr(exc, "errors", None)
+    if not callable(details): return _format_error(exc)
+    try: errs = exc.errors()  # type: ignore[attr-defined]  # pydantic v2: ValidationError.errors() 返回 list[dict]
+    except Exception: return _format_error(exc)
+    lines = []
+    for err in errs:
+        loc = err.get("loc", ())
+        field = loc[-1] if loc else tool_name  # 跳过顶层（tool_name）
+        msg = err.get("msg", "")
+        detail = msg.split(", ", 1)[-1] if ", " in msg else msg  # "Value error, must be high/max" → 取后段；其它原样
+        got = err.get("input")
+        if got is not None and "got" not in detail: detail = f"{detail}, got {got}"  # 尽量拼出原 error 字面量格式
+        lines.append(f"[Error] {field}: {detail}")
+    return "\n".join(lines) if lines else _format_error(exc)
+
+
+def _format_circuit_error(provider: str) -> str:
+    """格式化供应商熔断错误（含所有供应商状态）。"""
+    from yinao.ipu_client.ipu_context import get_circuit_status
+
+    status = get_circuit_status().get(provider, {})
+    remain = status.get("reset_remaining_sec", "?")
+    last_err = status.get("last_error", "")
+    all_status = get_circuit_status()
+    status_lines = []
+    for p, s in all_status.items():
+        label = "🟢" if s.get("available", True) else "🔴"
+        extra = ""
+        if not s.get("available", True):
+            extra = f" (熔断, {s.get('reset_remaining_sec', '?')}s 后恢复)"
+        status_lines.append(f"  {label} {p}{extra}")
+    formatted_status = "\n".join(status_lines) if status_lines else "  (无状态)"
+    return (
+        f"[Error] {provider} 当前不可用（已熔断，{remain}s 后自动恢复）。\n"
+        f"原因: {last_err}\n"
+        f"当前供应商状态:\n{formatted_status}"
+    )
+
+
+def _apply_field(
+    args: "UpdateRuntimeArgs",
+    rt,
+    field: str,
+    changes: list[str],
+    *,
+    value=None,
+    log_value=None,
+) -> bool:
+    """赋值 rt.X 并追加日志；返回是否执行。
+
+    - value 缺省：从 args 取（要求 args.has(field)）
+    - value 显式：使用给定值，args 仍可缺省提供（用于互斥里的清空/开启）
+    - log_value 缺省：用 f"{field}={value}"；显式则用自定义字符串
+    """
+    if value is None:
+        if not args.has(field):
+            return False
+        value = getattr(args, field)
+    setattr(rt, field, value)
+    changes.append(log_value if log_value is not None else f"{field}={value}")
+    return True
 
 
 def _handle_update_identity(arguments: dict) -> str:
-    """更新身份参数（system_prompt/role/description/max_iterations 任意组合）。
+    """更新身份参数（system_prompt/title/traits/max_iterations 任意组合）。
     写 JSON 后下轮生效。
     """
     from character.config_io import load_config, save_config
 
     config = load_config(_current_actor)
     ident = config.identity
-
     changes = []
 
-    if "system_prompt" in arguments:
-        ident.system_prompt = arguments["system_prompt"]
-        changes.append("system_prompt")
+    # 元组结构：(argument_key, dataclass_attr, parser, validator, log_with_value)
+    # - parser: arguments[key] 的转换函数（str/int/...）
+    # - validator: 校验函数，返回 True 通过；None 表示不校验
+    # - log_with_value: True → 变更日志写 "key=value"，False → 只写 "key"
+    field_specs = (
+        ("system_prompt", "system_prompt", str, None, False),
+        ("title", "title", str, None, True),
+        ("traits", "traits", str, None, False),
+        ("max_iterations", "max_iterations", int, lambda n: n > 0, True),)
 
-    if "title" in arguments:
-        ident.title = arguments["title"]
-        changes.append(f"title={arguments['title']}")
-
-    if "traits" in arguments:
-        ident.traits = arguments["traits"]
-        changes.append("traits")
-
-    if "max_iterations" in arguments:
-        n = int(arguments["max_iterations"])
-        if n <= 0:
-            return f"[Error] max_iterations must be positive, got {n}"
-        ident.max_iterations = n
-        changes.append(f"max_iterations={n}")
+    for key, attr, parser, validator, log_value in field_specs:
+        if key not in arguments:  continue
+        value = parser(arguments[key])
+        if validator and not validator(value): return f"[Error] {key} 校验失败, got {value}"
+        setattr(ident, attr, value)
+        changes.append(f"{key}={value}" if log_value else key)
 
     if not changes:
         return "[OK] no changes"
@@ -249,9 +269,7 @@ async def _handle_summarize_conversation(arguments: dict) -> str:
     import json
     from datetime import datetime
     from character import get_history_path
-    from character.summarizer import (
-        L1Summary, _analyze_slice, _guess_topic, _describe_slice, save_l1,
-    )
+    from character.summarizer import (L1Summary, _analyze_slice, _guess_topic, _describe_slice, save_l1)
 
     keep_recent_turns = int(arguments.get("keep_recent_turns", 6))
     topic_hint = arguments.get("topic", "")
@@ -287,16 +305,9 @@ async def _handle_summarize_conversation(arguments: dict) -> str:
     abs_to = cutoff_msg_idx - 1
 
     summary = L1Summary(
-        id=sid,
-        start_time=start_t,
-        end_time=end_t,
-        message_count=len(compress_slice),
-        user_turns=user_turns,
-        topic=topic,
-        detail=detail,
-        key_events=events,
-        msg_indices=(abs_from, abs_to),
-        source="manual",
+        id=sid, start_time=start_t, end_time=end_t, message_count=len(compress_slice),
+        user_turns=user_turns, topic=topic, detail=detail, key_events=events,
+        msg_indices=(abs_from, abs_to), source="manual",
     )
 
     saved_path = save_l1(_current_actor, summary)
@@ -312,13 +323,8 @@ async def _handle_summarize_conversation(arguments: dict) -> str:
 
     # 追加 compression_log
     from character.summarizer import append_compression_record
-    append_compression_record(
-        character_name=_current_actor,
-        source="summarize_conversation",
-        l1_id=summary.id,
-        abs_from=abs_from,
-        abs_to=abs_to,
-    )
+    append_compression_record(character_name=_current_actor, source="summarize_conversation",
+                              l1_id=summary.id, abs_from=abs_from, abs_to=abs_to)
 
     return "\n".join(lines)
 
@@ -330,16 +336,10 @@ async def _handle_archive_recent_talk(arguments: dict) -> str:
     from common.experience_core import update_experience
     import json
     from character import get_history_path
-    from character.summarizer import (
-        archive_recent_talk as _archive_recent_talk,
-        load_compression_log,
-        _gaps_between_covered,
-    )
+    from character.summarizer import (archive_recent_talk as _archive_recent_talk, load_compression_log, _gaps_between_covered)
     # 兼容老 import：history_json_to_markdown 已被移除
-    try:
-        from character.summarizer import history_json_to_markdown
-    except ImportError:
-        history_json_to_markdown = None
+    try: from character.summarizer import history_json_to_markdown
+    except ImportError: history_json_to_markdown = None
 
     # 解析参数：单段 (time_range_start/time_range_end) 或聚合 (time_ranges) 二选一
     time_range_start = (arguments.get("time_range_start") or "").strip()
@@ -353,7 +353,8 @@ async def _handle_archive_recent_talk(arguments: dict) -> str:
                 import json as _json
                 parsed = _json.loads(time_ranges_raw)
                 if isinstance(parsed, list):
-                    time_ranges = [[str(x[0]), str(x[1])] for x in parsed if isinstance(x, (list, tuple)) and len(x) >= 2]
+                    time_ranges = [[str(x[0]), str(x[1])] for x in parsed if
+                                   isinstance(x, (list, tuple)) and len(x) >= 2]
             except Exception:
                 # 尝试按换行/分号 split；每个区间内部按逗号 split
                 for line in time_ranges_raw.split("\n"):
@@ -370,9 +371,7 @@ async def _handle_archive_recent_talk(arguments: dict) -> str:
     people = [p.strip() for p in people_str.split(",") if p.strip()] if people_str else []
 
     history_path = get_history_path(_current_actor)
-    if not history_path.exists():
-        return "[Error] 无历史记录"
-
+    if not history_path.exists(): return "[Error] 无历史记录"
     with open(history_path, "r", encoding="utf-8") as f:
         messages: list[dict] = json.load(f)
 
@@ -383,28 +382,20 @@ async def _handle_archive_recent_talk(arguments: dict) -> str:
     _TOPIC_RE = _re.compile(r"话题\s*([A-Za-z0-9一二三四五六七八九十百千零]+)")
 
     def _extract_topic_markers(text: str) -> set[str]:
-        if not isinstance(text, str):
-            return set()
-        return set(_TOPIC_RE.findall(text))
+        return set(_TOPIC_RE.findall(text)) if isinstance(text, str) else set()
 
     def _validate_range_purity(start_ts: str, end_ts: str) -> tuple[bool, str]:
         """校验 (start_ts, end_ts) 区间内所有 user 消息的话题标记是否一致。
 
         返回 (ok, error_msg)。ok=False 时 error_msg 描述冲突并提示用聚合模式。
         """
-        def _msg_ts(m: dict) -> str:
-            return (m.get("time") or "")[:19]
-
+        def _msg_ts(m: dict) -> str: return (m.get("time") or "")[:19]
         slice_msgs = [m for m in messages
-                      if m.get("role") == "user"
-                      and start_ts <= _msg_ts(m) <= end_ts]
-        if not slice_msgs:
-            return True, ""
+                      if m.get("role") == "user" and start_ts <= _msg_ts(m) <= end_ts]
+        if not slice_msgs: return True, ""
         all_markers: set[str] = set()
-        for m in slice_msgs:
-            all_markers.update(_extract_topic_markers(m.get("content", "")))
-        if len(all_markers) <= 1:
-            return True, ""
+        for m in slice_msgs: all_markers.update(_extract_topic_markers(m.get("content", "")))
+        if len(all_markers) <= 1: return True, ""
         sorted_markers = sorted(all_markers)
         return False, (
             f"区间 [{start_ts}, {end_ts}] 内包含多个不同话题标记 {sorted_markers}。"
@@ -415,19 +406,16 @@ async def _handle_archive_recent_talk(arguments: dict) -> str:
             f"不要用单段模式把不同话题混在一起。"
         )
 
-    # 单段模式：先做纯度校验
     if time_range_start and time_range_end:
         ok, err = _validate_range_purity(time_range_start, time_range_end)
-        if not ok:
-            return f"[Error] {err}"
+        if not ok: return f"[Error] {err}"
 
     # 聚合模式：每个区间都做纯度校验
     if time_ranges:
         for r in time_ranges:
             if len(r) >= 2 and r[0] and r[1]:
                 ok, err = _validate_range_purity(r[0], r[1])
-                if not ok:
-                    return f"[Error] {err}"
+                if not ok: return f"[Error] {err}"
 
     # 准备工具调用的可见性数据：原始 arguments JSON + 归档时间戳
     tool_call_args = json.dumps(arguments, ensure_ascii=False)
@@ -435,14 +423,10 @@ async def _handle_archive_recent_talk(arguments: dict) -> str:
 
     try:
         summary = await _archive_recent_talk(
-            character_name=_current_actor,
-            messages=messages,
-            time_range_start=time_range_start,
-            time_range_end=time_range_end,
+            character_name=_current_actor, messages=messages,
+            time_range_start=time_range_start, time_range_end=time_range_end,
             time_ranges=time_ranges if time_ranges else None,
-            topic_hint=topic_hint,
-            topic_label=topic_label,
-            people=people,
+            topic_hint=topic_hint, topic_label=topic_label, people=people,
         )
 
         # 重新渲染近期对话原文（按 compression_log 过滤）
@@ -451,21 +435,17 @@ async def _handle_archive_recent_talk(arguments: dict) -> str:
         log = load_compression_log(_current_actor)
         gaps = _gaps_between_covered(len(messages), log, manual_only=True)
         visible_msgs = []
-        for start, end in gaps:
-            visible_msgs.extend(messages[start:end + 1])
+        for start, end in gaps: visible_msgs.extend(messages[start:end + 1])
 
         # 构建 summary_entry：聚合归档把整个范围合并为一个 entry
         # range_msg_indices 用于 _build_recall_block 召回时分段拼接
         summary_entry = {
             "id": summary.id,
             "topic_label": summary.topic_label or summary.topic or "归档话题",
-            "start_time": summary.start_time,
-            "end_time": summary.end_time,
-            "user_turns": summary.user_turns,
-            "detail": summary.detail,
+            "start_time": summary.start_time, "end_time": summary.end_time,
+            "user_turns": summary.user_turns, "detail": summary.detail,
             "msg_indices": list(summary.msg_indices),
-            "time_ranges": summary.time_ranges,
-            "range_msg_indices": summary.range_msg_indices,
+            "time_ranges": summary.time_ranges, "range_msg_indices": summary.range_msg_indices,
         }
 
         # 工具结果字符串
@@ -488,12 +468,9 @@ async def _handle_archive_recent_talk(arguments: dict) -> str:
         # 下次 dump_experience 不会把已渲染的工具调用重复追加。
         update_experience(_current_actor, "archive", {
             "messages": [{"role": "system"}] * 3 + visible_msgs,
-            "visible_msgs": visible_msgs,
-            "summary_entry": summary_entry,
-            "tool_call_args": tool_call_args,
-            "tool_result": tool_result,
-            "archive_ts": archive_ts,
-            "physical_total": len(messages),
+            "visible_msgs": visible_msgs, "summary_entry": summary_entry,
+            "tool_call_args": tool_call_args, "tool_result": tool_result,
+            "archive_ts": archive_ts, "physical_total": len(messages),
         })
 
         return tool_result
@@ -507,8 +484,7 @@ async def _handle_archive_recent_talk(arguments: dict) -> str:
                 "均已被覆盖或处理。请直接告知用户该状态，**不要再次调用 archive_recent_talk**。"
             )
         return f"[Error] {msg}"
-    except Exception as e:
-        return f"[Error] {type(e).__name__}: {e}"
+    except Exception as e: return _format_error(e)
 
 
 def _handle_recall_topic(arguments: dict) -> str:
@@ -534,30 +510,20 @@ def _handle_recall_topic(arguments: dict) -> str:
     if topic_id:
         try:
             summary, block = recall_topic_by_id(_current_actor, topic_id)
-            # 更新 experience.md
-            update_experience(_current_actor, "recall", {
-                "topic_id": summary.id, "recall_block": block, })
+            update_experience(_current_actor, "recall", {"topic_id": summary.id, "recall_block": block})  # 更新 experience.md
             return block
-        except ValueError as e:
-            return f"[Error] {e}"
+        except ValueError as e: return f"[Error] {e}"
 
     if topic_label:
         try:
-            summary, block = recall_topic_by_label(
-                _current_actor, topic_label
-            )
+            summary, block = recall_topic_by_label(_current_actor, topic_label)
             label = summary.topic_label or summary.topic or "未命名"
-            # 更新 experience.md
-            update_experience(_current_actor, "recall", {
-                "topic_id": summary.id,
-                "recall_block": block,
-            })
+            update_experience(_current_actor, "recall", {"topic_id": summary.id, "recall_block": block})  # 更新 experience.md
             return (
                 f"[话题回想] 找到「{label}」（ID: {summary.id}）\n"
                 f"将以下内容注入上下文：\n\n{block}"
             )
-        except ValueError as e:
-            return f"[Error] {e}"
+        except ValueError as e: return f"[Error] {e}"
 
     return "[Error] 需要 topic_label 或 topic_id 参数，也可传 list_all=true 查看所有话题"
 
@@ -585,21 +551,16 @@ async def _handle_create_character(arguments: dict) -> str:
     # ── 解析 provider ──
     if provider_arg:
         provider = provider_arg
-        # 校验 ipu 在此 provider 下存在
-        if ipu not in IPU_REGISTRY.get(provider, {}):
+        if ipu not in IPU_REGISTRY.get(provider, {}):  # 校验 ipu 在此 provider 下存在
             available = ", ".join(IPU_REGISTRY.get(provider, {}).keys())
             return (
                 f"[Error] 智能基元 '{ipu}' 在供应商 {provider} 下不存在。\n"
                 f"{provider} 可用智能基元: {available if available else '(无)'}"
             )
     else:
-        # 未指定 provider → 自动从 IPU_REGISTRY 反向查找
-        found_providers = [p for p, ms in IPU_REGISTRY.items() if ipu in ms]
+        found_providers = [p for p, ms in IPU_REGISTRY.items() if ipu in ms]  # 未指定 provider → 自动从 IPU_REGISTRY 反向查找
         if not found_providers:
-            all_ipus = []
-            for p, ms in IPU_REGISTRY.items():
-                for m in ms:
-                    all_ipus.append(f"{p}/{m}")
+            all_ipus = [f"{p}/{m}" for p, ms in IPU_REGISTRY.items() for m in ms]
             return (
                 f"[Error] 智能基元 '{ipu}' 在所有供应商中都不存在。\n"
                 f"可用智能基元: {', '.join(all_ipus)}"
@@ -612,14 +573,9 @@ async def _handle_create_character(arguments: dict) -> str:
         provider = found_providers[0]
 
     config = ActorConfig(
-        identity=RoleConfig(
-            system_prompt=system_prompt,
-            title=title,
-            traits=traits,
-        ),
+        identity=RoleConfig(system_prompt=system_prompt, title=title, traits=traits),
         runtime=IPURuntime(
-            provider=provider,
-            ipu=ipu,
+            provider=provider, ipu=ipu,
             temperature=float(arguments.get("temperature", 1.0)),
             top_p=float(arguments.get("top_p", 0.95)),
             max_icp=int(arguments.get("max_icp", 8192)),
@@ -700,15 +656,10 @@ async def _handle_send_to_character(arguments: dict) -> str:
 
     is_first = True
     for entry in recipient_history.messages[-20:]:  # 最近 20 条（10 轮）
-        role = entry.get("role", "user")
-        content = entry.get("content", "")
-        if role == "user":
-            all_msgs.append({"role": "user", "content": content})
-        elif role == "assistant":
-            if content:  # 跳过空回复
-                all_msgs.append({"role": "assistant", "content": content})
-        elif role == "system" and not is_first:
-            all_msgs.append({"role": "system", "content": content})
+        role, content = entry.get("role", "user"), entry.get("content", "")
+        if role == "user": all_msgs.append({"role": "user", "content": content})
+        elif role == "assistant" and content: all_msgs.append({"role": "assistant", "content": content})  # 跳过空回复
+        elif role == "system" and not is_first: all_msgs.append({"role": "system", "content": content})
         is_first = False
 
     # ── 4. 调用接收者的 LLM ──
@@ -721,14 +672,12 @@ async def _handle_send_to_character(arguments: dict) -> str:
     from common.utils import set_display_name as _set_dn
 
     sender_name = _current_actor  # 保存发送者名称，用于后续写入发送者历史
-    _set_dn(recipient)  # 终端显示名 → 接收者
-    set_actor(recipient)  # _current_actor → 接收者（update_runtime/update_identity 操作正确目标）
+    _set_dn(recipient); set_actor(recipient)  # 终端显示名/_current_actor → 接收者（update_* 操作正确目标）
 
     # ── 调用接收者 LLM，失败时自动尝试其他供应商 ──
     from yinao.ipu_client.ipu_context import IPU_REGISTRY as _MN, list_ipu_providers as _list_prov
     tried_providers = {recipient_provider}
-    reply = ""
-    last_error = ""
+    reply = ""; last_error = ""
     engine_fallback_note = ""  # 记录是否发生了引擎降级
 
     try:
@@ -736,47 +685,35 @@ async def _handle_send_to_character(arguments: dict) -> str:
             try:
                 chat_fn = resolve_chat(recipient_provider)
                 result = await chat_fn(all_msgs, recipient_ipu_config, character_name=recipient)
-                reply = ""
                 for msg in reversed(result.messages):
                     if msg.get("role") == "assistant" and msg.get("content"):
-                        reply = msg["content"]
-                        break
+                        reply = msg["content"]; break
                 break  # 成功
             except Exception as e:
                 last_error = f"{type(e).__name__}: {e}"
-                _logger.error(
-                    f"  [send_to_character] {recipient} @ {recipient_provider}/{recipient_ipu_short} 调用失败: {last_error}")
-                # 尝试切换到其他供应商
-                available = [p for p in _list_prov() if p not in tried_providers]
+                _logger.error(f"  [send_to_character] {recipient} @ {recipient_provider}/{recipient_ipu_short} 调用失败: {last_error}")
+                available = [p for p in _list_prov() if p not in tried_providers]  # 尝试切换到其他供应商
                 if not available:
                     reply = f"[Error] 调用 {recipient} 的 LLM 失败 ({recipient_provider}/{recipient_ipu_short}): {last_error}"
                     break
-                old_provider = recipient_provider
-                old_model = recipient_ipu_short
+                old_provider, old_model = recipient_provider, recipient_ipu_short
                 recipient_provider = available[0]
                 recipient_ipu_short = next(iter(_MN.get(recipient_provider, {}).keys()), "v4-flash")
                 from yinao import resolve_ipu as _rm2
-                try:
-                    _, recipient_ipu_config = _rm2(recipient_provider, recipient_ipu_short)
+                try: _, recipient_ipu_config = _rm2(recipient_provider, recipient_ipu_short)
                 except KeyError as ke:
-                    reply = f"[Error] 无法为 {recipient} 找到可用引擎: {ke}"
-                    break
-                # 同步新引擎运行时配置
-                sync_config_to_ipu(recipient_config, recipient_ipu_config)
-                # 重建系统消息：反映实际运行引擎（非配置的旧引擎）
-                all_msgs[0] = build_system_message(recipient_config, recipient)
+                    reply = f"[Error] 无法为 {recipient} 找到可用引擎: {ke}"; break
+                sync_config_to_ipu(recipient_config, recipient_ipu_config)  # 同步新引擎运行时配置
+                all_msgs[0] = build_system_message(recipient_config, recipient)  # 重建系统消息：反映实际运行引擎
                 tried_providers.add(recipient_provider)
                 engine_fallback_note = (
                     f"\n⚠️ 引擎降级：{old_provider}/{old_model} → {recipient_provider}/{recipient_ipu_short}"
                     f"（原因: {last_error}）"
                 )
-                _logger.info(
-                    f"  [send_to_character] 自动切换 {recipient} → {recipient_provider}/{recipient_ipu_short}")
+                _logger.info(f"  [send_to_character] 自动切换 {recipient} → {recipient_provider}/{recipient_ipu_short}")
     finally:
-        set_actor(sender_name)  # 恢复 _current_actor
-        _set_dn(sender_name)  # 恢复终端显示名
-    if not reply.strip():
-        reply = "(未生成回复)"
+        set_actor(sender_name); _set_dn(sender_name)  # 恢复 _current_actor / 终端显示名
+    if not reply.strip(): reply = "(未生成回复)"
 
     # ── 5. 写入发送者历史 ──
     # 发送者历史：完整记录发送+回复（不写空占位，避免异常残留）
@@ -816,8 +753,7 @@ def set_scheduler(scheduler):
 
 def _handle_shice_schedule_add(arguments: dict) -> str:
     """时策工具：LLM 传入绝对时间戳列表，注册定时任务。"""
-    if _scheduler is None:
-        return "[Error] 时策调度器未初始化"
+    if _scheduler is None: return "[Error] 时策调度器未初始化"
 
     timestamps = arguments.get("timestamps", [])
     message = arguments.get("message", "")
@@ -826,25 +762,19 @@ def _handle_shice_schedule_add(arguments: dict) -> str:
 
     from schedule.strategies import wall_ms
     now = wall_ms()
-    # 过滤已过期的时间戳（延迟 ≤ 60s 的保留，让 missed handler 处理）
-    valid = [t for t in timestamps if t >= now - 60_000]
-    if not valid:
-        return "[Error] 所有时间戳均已过期超过 60 秒"
+    valid = [t for t in timestamps if t >= now - 60_000]  # 过滤已过期（延迟 ≤ 60s 保留，让 missed handler 处理）
+    if not valid: return "[Error] 所有时间戳均已过期超过 60 秒"
 
     job_id = _scheduler.add_recurring(
-        name=f"时策-{message[:20]}",
-        message=message,
-        timestamps=valid,
-        character_id=_current_actor,
+        name=f"时策-{message[:20]}", message=message,
+        timestamps=valid, character_id=_current_actor,
     )
 
     dropped = len(timestamps) - len(valid)
     info = f"已注册 {len(valid)} 个时间点"
-    if dropped:
-        info += f"（{dropped} 个已过期被忽略）"
+    if dropped: info += f"（{dropped} 个已过期被忽略）"
 
-    t0 = valid[0]
-    delay = (t0 - now) / 1000.0
+    t0 = valid[0]; delay = (t0 - now) / 1000.0
     import time as _t
     due_str = _t.strftime("%H:%M:%S", _t.localtime(t0 / 1000.0))
     return f"[OK] {info}\n  首次触发: {due_str}（{delay:.1f}秒后）\n  job_id: {job_id}"
@@ -852,11 +782,9 @@ def _handle_shice_schedule_add(arguments: dict) -> str:
 
 def _handle_shice_schedule_list() -> str:
     """列出所有活跃的时策任务。"""
-    if _scheduler is None:
-        return "[OK] 时策调度器未初始化，无活跃任务"
+    if _scheduler is None: return "[OK] 时策调度器未初始化，无活跃任务"
     jobs = _scheduler.list_jobs()
-    if not jobs:
-        return "[OK] 无活跃的时策任务"
+    if not jobs: return "[OK] 无活跃的时策任务"
     lines = [f"共 {len(jobs)} 个活跃任务:"]
     for j in jobs:
         lines.append(f"  [{j['job_id']}] {j['name']} | 已触发 {j['fired']}/{j['total']} | 剩余 {j['remaining']}")
@@ -865,15 +793,11 @@ def _handle_shice_schedule_list() -> str:
 
 def _handle_shice_schedule_cancel(arguments: dict) -> str:
     """取消时策任务。"""
-    if _scheduler is None:
-        return "[Error] 时策调度器未初始化"
+    if _scheduler is None: return "[Error] 时策调度器未初始化"
     job_id = arguments.get("job_id", "")
-    if not job_id:
-        return "[Error] 需要 job_id 参数（可通过 shice_schedule_list 获取）"
+    if not job_id: return "[Error] 需要 job_id 参数（可通过 shice_schedule_list 获取）"
     ok = _scheduler.remove_remaining(job_id)
-    if ok:
-        return f"[OK] 已取消任务 {job_id}"
-    return f"[Error] 任务 {job_id} 不存在或已结束"
+    return f"[OK] 已取消任务 {job_id}" if ok else f"[Error] 任务 {job_id} 不存在或已结束"
 
 
 # ── 系统工具 ──
@@ -888,32 +812,24 @@ def _handle_bash(arguments: dict) -> str:
             timeout=30, encoding="utf-8", errors="replace",
         )
         out = []
-        if result.stdout.strip():
-            out.append(result.stdout.strip())
-        if result.stderr.strip():
-            out.append(f"[stderr]\n{result.stderr.strip()}")
-        if not out:
-            out.append(f"(exit code {result.returncode})")
+        if result.stdout.strip(): out.append(result.stdout.strip())
+        if result.stderr.strip(): out.append(f"[stderr]\n{result.stderr.strip()}")
+        if not out: out.append(f"(exit code {result.returncode})")
         return "\n".join(out)
-    except subprocess.TimeoutExpired:
-        return "[Error] 命令超时（30s）"
-    except Exception as e:
-        return f"[Error] {type(e).__name__}: {e}"
+    except subprocess.TimeoutExpired: return "[Error] 命令超时（30s）"
+    except Exception as e: return _format_error(e)
 
 
 async def _handle_web_fetch(arguments: dict) -> str:
     url = arguments["url"]
     try:
         from urllib.request import urlopen, Request
-        req = Request(url, headers={
-            "User-Agent": "Mozilla/5.0 (compatible; Agent01/1.0)"
-        })
+        req = Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; Agent01/1.0)"})
         with urlopen(req, timeout=15) as resp:
             content = resp.read()
             charset = resp.headers.get_content_charset() or "utf-8"
             text = content.decode(charset, errors="replace")
-    except Exception as e:
-        return f"[Error] 获取失败: {type(e).__name__}: {e}"
+    except Exception as e: return f"[Error] 获取失败: {type(e).__name__}: {e}"
 
     # 简单 HTML 剥离
     import re
@@ -953,13 +869,10 @@ async def _handle_web_search(arguments: dict) -> str:
 
     search_url = f"https://html.duckduckgo.com/html/?q={quote(query)}"
     try:
-        req = Request(search_url, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        })
+        req = Request(search_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
         with urlopen(req, timeout=10) as resp:
             html = resp.read().decode("utf-8", errors="replace")
-    except Exception as e:
-        return f"[Error] 搜索失败: {type(e).__name__}: {e}"
+    except Exception as e: return f"[Error] 搜索失败: {type(e).__name__}: {e}"
 
     import re
     results = []
@@ -973,8 +886,7 @@ async def _handle_web_search(arguments: dict) -> str:
         link = re.sub(r'<[^>]+>', '', links[i]).strip() if i < len(links) else ""
         results.append(f"{i + 1}. {title}\n   {snippet}\n   [{link}]")
 
-    if not results:
-        return f"[Info] 搜索结果为空。搜索词: {query}"
+    if not results: return f"[Info] 搜索结果为空。搜索词: {query}"
     return f"搜索 \"{query}\" (共 {len(results)} 条):\n\n" + "\n\n".join(results)
 
 
@@ -990,18 +902,15 @@ def _find_missing_param(type_error: TypeError, schema: dict) -> str | None:
 
 def _resolve_path(path: str) -> pathlib.Path:
     p = pathlib.Path(path).expanduser()
-    if not p.is_absolute():
-        p = pathlib.Path.cwd() / p
+    if not p.is_absolute(): p = pathlib.Path.cwd() / p
     return p.resolve()
 
 
 async def _read_file(path: str, line_range: str | None = None) -> str:
     try:
         resolved = _resolve_path(path)
-        if not resolved.exists():
-            return f"[Error] file not found: {path}"
-        # 图片/二进制文件不应直接读取，提示使用 vision 能力
-        img_exts = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".ico", ".tiff", ".svg"}
+        if not resolved.exists(): return f"[Error] file not found: {path}"
+        img_exts = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".ico", ".tiff", ".svg"}  # 图片/二进制文件不应直接读取，提示使用 vision 能力
         if resolved.suffix.lower() in img_exts:
             return (
                 f"[提示] {path} 是图片文件，不要用 read_file 读取。"
@@ -1014,95 +923,70 @@ async def _read_file(path: str, line_range: str | None = None) -> str:
             if len(parts) == 2:
                 start, end = int(parts[0]), int(parts[1])
                 lines = content.split("\n")
-                start = max(1, start) - 1
-                end = min(len(lines), end)
+                start, end = max(1, start) - 1, min(len(lines), end)
                 content = "\n".join(lines[start:end])
         return content
-    except PermissionError:
-        return f"[Error] permission denied: {path}"
-    except Exception as e:
-        return f"[Error] {type(e).__name__}: {e}"
+    except PermissionError: return f"[Error] permission denied: {path}"
+    except Exception as e: return _format_error(e)
 
 
 async def _write_file(path: str, content: str, mode: str = "w") -> str:
     try:
-        resolved = _resolve_path(path)
-        resolved.parent.mkdir(parents=True, exist_ok=True)
-        if mode == "a" and resolved.exists():
-            current = resolved.read_text(encoding="utf-8")
-            content = current + content
+        resolved = _resolve_path(path); resolved.parent.mkdir(parents=True, exist_ok=True)
+        if mode == "a" and resolved.exists(): content = resolved.read_text(encoding="utf-8") + content
         resolved.write_text(content, encoding="utf-8")
         return f"[OK] wrote {len(content)} chars to {path}"
-    except PermissionError:
-        return f"[Error] permission denied: {path}"
-    except Exception as e:
-        return f"[Error] {type(e).__name__}: {e}"
+    except PermissionError: return f"[Error] permission denied: {path}"
+    except Exception as e: return _format_error(e)
 
 
 async def _list_dir(path: str = ".") -> str:
     try:
         resolved = _resolve_path(path)
-        if not resolved.exists():
-            return f"[Error] dir not found: {path}"
-        if not resolved.is_dir():
-            return f"[Error] not a dir: {path}"
+        if not resolved.exists(): return f"[Error] dir not found: {path}"
+        if not resolved.is_dir(): return f"[Error] not a dir: {path}"
         items = []
         for item in sorted(resolved.iterdir()):
             suffix = "/" if item.is_dir() else ""
             size = ""
             if item.is_file():
-                try:
-                    size = f" ({item.stat().st_size} bytes)"
-                except OSError:
-                    pass
+                try: size = f" ({item.stat().st_size} bytes)"
+                except OSError: pass
             label = "[DIR]" if item.is_dir() else "[FILE]"
             items.append(f"{label} {item.name}{suffix}{size}")
         return "\n".join(items) if items else "(empty)"
-    except PermissionError:
-        return f"[Error] permission denied: {path}"
-    except Exception as e:
-        return f"[Error] {type(e).__name__}: {e}"
+    except PermissionError: return f"[Error] permission denied: {path}"
+    except Exception as e: return _format_error(e)
 
 
 async def _glob(pattern: str, path: str = ".") -> str:
     try:
         base = _resolve_path(path)
         matches = sorted([str(p.relative_to(base)) for p in base.glob(pattern) if p.is_file()])
-        if not matches:
-            return f"[Info] no matches for {pattern}"
+        if not matches: return f"[Info] no matches for {pattern}"
         return f"共 {len(matches)} matches:\n" + "\n".join(matches)
-    except Exception as e:
-        return f"[Error] {type(e).__name__}: {e}"
+    except Exception as e: return _format_error(e)
 
 
 async def _grep(pattern: str, path: str = ".", case_insensitive: bool = False, max_results: int = 20) -> str:
-    try:
-        re.compile(pattern)
-    except re.error as e:
-        return f"[Error] invalid regex: {e}"
+    try: re.compile(pattern)
+    except re.error as e: return f"[Error] invalid regex: {e}"
     flags = re.IGNORECASE if case_insensitive else 0
     base = _resolve_path(path)
-    results = []
-    total = 0
+    results = []; total = 0
     files = [base] if base.is_file() else [f for f in base.rglob("*") if f.is_file() and _is_text_file(f)]
     for file_path in files:
-        try:
-            lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
-        except Exception:
-            continue
+        try: lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except Exception: continue
         for i, line in enumerate(lines, 1):
             if re.search(pattern, line, flags):
                 snippet = line.strip()
-                if len(snippet) > 120:
-                    snippet = snippet[:120] + "..."
+                if len(snippet) > 120: snippet = snippet[:120] + "..."
                 results.append(f"  {file_path.name}:{i}: {snippet}")
                 total += 1
-                if total >= max_results:
-                    break
-        if total >= max_results:
-            break
-    if not results:
-        return f"[Info] no matches for {pattern}"
+                if total >= max_results: break
+        if total >= max_results: break
+    if not results: return f"[Info] no matches for {pattern}"
     suffix = f"\n... and {total - max_results} more" if total > max_results else ""
     header = f"grep '{pattern}' ({total} matches):\n"
     return header + "\n".join(results[:max_results]) + suffix
@@ -1111,8 +995,7 @@ async def _grep(pattern: str, path: str = ".", case_insensitive: bool = False, m
 async def _file_info(path: str) -> str:
     try:
         resolved = _resolve_path(path)
-        if not resolved.exists():
-            return f"[Error] not found: {path}"
+        if not resolved.exists(): return f"[Error] not found: {path}"
         stat = resolved.stat()
         is_dir = resolved.is_dir()
         import datetime
@@ -1120,10 +1003,8 @@ async def _file_info(path: str) -> str:
         size = "" if is_dir else f" size: {stat.st_size} bytes"
         label = "dir" if is_dir else "file"
         return f"[OK] {label}: {path}\n  path: {resolved}\n  modified: {mtime}{size}"
-    except PermissionError:
-        return f"[Error] permission denied: {path}"
-    except Exception as e:
-        return f"[Error] {type(e).__name__}: {e}"
+    except PermissionError: return f"[Error] permission denied: {path}"
+    except Exception as e: return _format_error(e)
 
 
 def _is_text_file(path: pathlib.Path) -> bool:
@@ -1136,424 +1017,6 @@ def _is_text_file(path: pathlib.Path) -> bool:
         return True
     except (OSError, UnicodeDecodeError):
         return False
-
-
-FILE_TOOLS: list[ToolDef] = []
-_tools_built = False
-
-
-def _ensure_tools():
-    global _tools_built, FILE_TOOLS
-    if not _tools_built:
-        # 动态获取可用模型
-        try:
-            import yinao.ipu_resolver as mr
-            providers_desc = ", ".join(mr.IPU_REGISTRY.keys())
-            models_by_provider = []
-            for p, ms in mr.IPU_REGISTRY.items():
-                models_by_provider.append(f"{p}: {', '.join(ms.keys())}")
-            model_list_explicit = []
-            for p, ms in mr.IPU_REGISTRY.items():
-                for short_name in ms.keys():
-                    model_list_explicit.append(f"{short_name}")
-            runtime_desc = (
-                f"update runtime params. Any combination is supported. "
-                f"ipu: short name ONLY. Available: {', '.join(model_list_explicit)}. "
-                f"temperature: 0-2. top_p: 0-1. max_icp: positive int. "
-                f"thinking_mode: enabled/disabled/auto. "
-                f"reasoning_effort: high/max (需 thinking_enabled=true，否则自动开启 thinking)。 "
-                f"thinking_enabled: true/false (关 thinking 时自动清除 reasoning_effort；"
-                f"开 thinking 时 temperature/top_p 由 DeepSeek API 忽略不生效)。"
-            )
-            identity_desc = (
-                "update identity config. system_prompt: core personality. "
-                "title: title/position. traits: trait description. "
-                "max_iterations: max reasoning iterations (positive int)."
-            )
-        except Exception:
-            runtime_desc = "update runtime params: ipu, temperature, top_p, max_icp, thinking_mode"
-            identity_desc = "update identity: system_prompt, title, traits, max_iterations"
-        FILE_TOOLS = [
-            ToolDef(
-                name="read_file",
-                description="read file content. params: path, line_range (optional, format start,end)",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string"},
-                        "line_range": {"type": "string"}
-                    },
-                    "required": ["path"]
-                },
-                fn=_read_file,
-            ),
-            ToolDef(
-                name="write_file",
-                description="write content to file. params: path, content, mode (w or a)",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string"},
-                        "content": {"type": "string"},
-                        "mode": {"type": "string", "default": "w"}
-                    },
-                    "required": ["path", "content"]
-                },
-                fn=_write_file,
-            ),
-            ToolDef(
-                name="list_dir",
-                description="list directory contents. params: path (default .)",
-                parameters={
-                    "type": "object",
-                    "properties": {"path": {"type": "string"}},
-                    "required": []
-                },
-                fn=_list_dir,
-            ),
-            ToolDef(
-                name="glob",
-                description="glob pattern matching. params: pattern, path (default .)",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "pattern": {"type": "string"},
-                        "path": {"type": "string"}
-                    },
-                    "required": ["pattern"]
-                },
-                fn=_glob,
-            ),
-            ToolDef(
-                name="grep",
-                description="regex search in files. params: pattern, path, case_insensitive, max_results",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "pattern": {"type": "string"},
-                        "path": {"type": "string"},
-                        "case_insensitive": {"type": "boolean"},
-                        "max_results": {"type": "integer"}
-                    },
-                    "required": ["pattern"]
-                },
-                fn=_grep,
-            ),
-            ToolDef(
-                name="file_info",
-                description="get file/dir info. params: path",
-                parameters={
-                    "type": "object",
-                    "properties": {"path": {"type": "string"}},
-                    "required": ["path"]
-                },
-                fn=_file_info,
-            ),
-            # ── 自手术工具 ──
-            ToolDef(
-                name="update_runtime",
-                description=runtime_desc,
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "ipu": {"type": "string"},
-                        "temperature": {"type": "number"},
-                        "top_p": {"type": "number"},
-                        "max_icp": {"type": "integer"},
-                        "thinking_mode": {"type": "string"},
-                        "reasoning_effort": {"type": "string"},
-                        "thinking_enabled": {"type": "boolean"},
-                    },
-                    "required": []
-                },
-                fn=None,
-            ),
-            ToolDef(
-                name="update_identity",
-                description=identity_desc,
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "system_prompt": {"type": "string"},
-                        "title": {"type": "string"},
-                        "traits": {"type": "string"},
-                        "max_iterations": {"type": "integer"},
-                    },
-                    "required": []
-                },
-                fn=None,
-            ),
-            # ── 历史摘要工具 ──
-            ToolDef(
-                name="summarize_conversation",
-                description=(
-                    "将较早的对话历史压缩为摘要，节省上下文。"
-                    "当智点（ICP）消耗过高或话题自然切换时主动调用。"
-                    "keep_recent_turns: 保留最近 N 轮原文不压缩（默认 6）。"
-                    "topic: 摘要主题（可选，留空自动推断）。"
-                    "压缩后的摘要下轮自动注入上下文。"
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "keep_recent_turns": {"type": "integer"},
-                        "topic": {"type": "string"},
-                    },
-                    "required": []
-                },
-                fn=None,
-            ),
-            # ── 话题归档工具 ──
-            ToolDef(
-                name="archive_recent_talk",
-                description=(
-                    "按时间戳归档一段或多段对话为话题摘要，释放上下文空间。\n\n"
-                    "**使用场景**：用户说「转为摘要」「归档这个话题」「先聊别的」时调用。\n\n"
-                    "**效果**：指定时间范围内的对话被提炼为结构化摘要存入磁盘，下轮起不再占用上下文。"
-                    "后续可通过 recall_topic 精确召回继续讨论。\n\n"
-                    "**重要原则：传参即结果**——你传入什么时间戳，工具就归档什么范围；工具不会自作主张"
-                    "扩展或收缩区间。归档前请从上下文里**直接读取**你看到的时间戳字面值，不要估算。\n\n"
-                    "**两种模式（二选一）**：\n"
-                    "1. **单段模式**（兼容性）：传 time_range_start + time_range_end，归档一段连续对话。\n"
-                    "2. **聚合模式**（推荐）：传 time_ranges 数组，每个元素是 [start, end]，可离散不连续。\n"
-                    "   工具一次性合并为同一条 L1、共享同一个 id，召回时一次性注入所有原始片段。\n\n"
-                    "**参数语义**：\n"
-                    "- time_range_start: 单段模式起始时间戳（与 time_range_end 配合使用）\n"
-                    "- time_range_end: 单段模式结束时间戳\n"
-                    "- time_ranges: 聚合模式数组，例如 `[[\"2026-07-12 10:01:00\", \"2026-07-12 10:01:30\"], "
-                    "[\"2026-07-12 10:03:00\", \"2026-07-12 10:03:30\"]]`。留空字符串表示'最早/末尾'。\n"
-                    "- topic_hint: 话题方向提示（可选）\n"
-                    "- topic_label: 用户指定的话题标签（可选，优先使用）\n"
-                    "- people: 关联人物列表，逗号分隔（可选）\n\n"
-                    "**单段 vs 聚合**：当一个话题在对话中被其他话题打断、分散成 N 个不连续片段时，"
-                    "**用聚合模式传 N 个区间**，一次调用即可。多区间合并为同一条 L1 后，"
-                    "recall_topic 召回时也是 1 次调用把所有片段拉回来——这是和 7.md 示范一致的行为。\n\n"
-                    "**触发条件（严格）**：仅当用户**显式说出归档意图**（「归档 / 总结 / 转摘要 / 先放一放 / 收尾 / 聊完了 / 这个话题结束」）"
-                    "才调用本工具。**用户只发话题标记（如「话题1」「话题2」）不算归档指令**——"
-                    "那是用户在测试对话连通性或标记语义，不是让你归档。\n\n"
-                    "**三种模式（按优先级）**：\n"
-                    "1. **话题标签模式（推荐，最简单）**：只传 `topic_label=\"话题1\"`，不传任何时间戳。"
-                    "工具自动扫描所有未归档 user 消息，匹配含「话题1」的 user，"
-                    "为每条 user 构造独立区间 [user.time, user 后第一条 assistant.time]，"
-                    "合并为同一条 L1。**无需你手动算时间戳**。\n"
-                    "2. **聚合模式**：传 `time_ranges=[[\"ts1\", \"ts2\"], [\"ts3\", \"ts4\"]]`，"
-                    "适用于精确指定离散不连续片段（每片段必须纯单一话题）。\n"
-                    "3. **单段模式**：传 `time_range_start` + `time_range_end`，仅适用于**纯单一话题连续区间**。\n\n"
-                    "**禁止行为（每次回复前自检）**："
-                    "1) 不要主动识别对话里的话题边界。"
-                    "2) 不要猜测用户「可能想归档什么」。"
-                    "3) 不要在回复里暗示「我看到你提到的话题X / 话题Y」。"
-                    "4) **不要主动提议继续归档其他话题**——用户没说要归档的话题就不该提议。"
-                    "5) 工具调用成功后只回复一句确认，不要重复摘要细节、不要列 ID、不要列时间范围、不要问要不要继续。\n\n"
-                    "**区间纯度硬约束**：单段 / 聚合模式（time_range*）只允许区间内 user 消息含**同一话题标记**。"
-                    "若区间跨多个不同话题（例如 [11:07:28, 11:07:39] 同时含「话题1」「话题2」），"
-                    "工具会拒绝执行并报错——**这是预期行为**，看到错误后立即改用「话题标签模式」传 topic_label 即可，"
-                    "**不要在单段/聚合模式里反复试不同的 time_range 组合**。\n\n"
-                    "**时间戳读取**：从上下文「近期对话原文」区直接复制 user / assistant 的 `### [YYYY-MM-DD HH:MM:SS] role` 时间戳字面值，不要估算。\n\n"
-                    "返回归档后的摘要内容。"
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "time_range_start": {"type": "string"},
-                        "time_range_end": {"type": "string"},
-                        "time_ranges": {
-                            "type": "array",
-                            "items": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "minItems": 2,
-                                "maxItems": 2,
-                            },
-                            "description": "聚合模式时间区间数组，每元素 [start, end]",
-                        },
-                        "topic_hint": {"type": "string"},
-                        "topic_label": {"type": "string"},
-                        "people": {"type": "string"},
-                    },
-                    "required": []
-                },
-                fn=None,
-            ),
-            ToolDef(
-                name="recall_topic",
-                description=(
-                    "召回已归档的话题摘要，将原始对话注入上下文继续讨论。\n\n"
-                    "**使用场景**：用户说「继续聊之前的话题」「回顾价值本质」「我们上次说的」时调用。\n\n"
-                    "**效果**：调用后原始对话内容会被注入到上下文，"
-                    "角色可以「续谈」而非「复述」（与 7.md 示范一致：只回放原文，不加结构化包装）。"
-                    "聚合归档的多区间也会被一次性全部召回。\n\n"
-                    "参数（至少传一个）：\n"
-                    "- topic_label: 话题标签模糊匹配（如「价值本质」「电影」）\n"
-                    "- topic_id: 精确匹配归档 ID（如 T-20260707-143020）\n"
-                    "- list_all: true=列出所有已归档话题（不做召回）\n\n"
-                    "**优先级**：topic_label > topic_id > list_all。"
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "topic_label": {"type": "string"},
-                        "topic_id": {"type": "string"},
-                        "list_all": {"type": "boolean"},
-                    },
-                    "required": []
-                },
-                fn=None,
-            ),
-            # ── 角色管理工具 ──
-            ToolDef(
-                name="create_character",
-                description=(
-                    "创建新角色。name: 角色名称，system_prompt: 核心人格定义，"
-                    "title: 头衔（可选），traits: 特质描述（可选），"
-                    "ipu: 智能基元短名（可选），provider: 供应商（可选），"
-                    "temperature: 0-2（可选），top_p: 0-1（可选），"
-                    "thinking_enabled: true/false（可选，默认 true），"
-                    "reasoning_effort: high/max（可选，默认 high）。"
-                    "注意：thinking_enabled=false 时不应设 reasoning_effort（互斥）。"
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string"},
-                        "system_prompt": {"type": "string"},
-                        "title": {"type": "string"},
-                        "traits": {"type": "string"},
-                        "ipu": {"type": "string"},
-                        "provider": {"type": "string"},
-                        "temperature": {"type": "number"},
-                        "top_p": {"type": "number"},
-                        "max_icp": {"type": "integer"},
-                        "thinking_enabled": {"type": "boolean"},
-                        "thinking_mode": {"type": "string"},
-                        "reasoning_effort": {"type": "string"},
-                    },
-                    "required": ["name", "system_prompt"]
-                },
-                fn=None,
-            ),
-            ToolDef(
-                name="list_characters",
-                description="列出所有已注册角色及其智能基元和描述",
-                parameters={
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                },
-                fn=None,
-            ),
-            ToolDef(
-                name="send_to_character",
-                description=(
-                    "向目标角色发送消息，触发对方生成回复。\n\n"
-                    "**重要：当你根据用户要求，需要与另一个角色对话时，必须使用此工具，不要直接生成角色扮演文本。也不要在用户没有同意的情况下与其他角色沟通**\n\n"
-                    "调用后：\n"
-                    "1. 你的消息被转发给 recipient，写入对方对话历史\n"
-                    "2. recipient 以角色身份生成回复（实时展示给用户）\n"
-                    "3. 回复内容通过返回值返回，供你决定下一步\n\n"
-                    "参数：recipient: 目标角色名，message: 消息内容。\n"
-                    "**注意：每调用一次 = 一轮对话。需要多轮时，等结果返回后再调用一次。**"
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "recipient": {"type": "string"},
-                        "message": {"type": "string"},
-                    },
-                    "required": ["recipient", "message"]
-                },
-                fn=None,
-            ),
-            # ── 时策工具 ──
-            ToolDef(
-                name="shice_schedule_add",
-                description=(
-                    "注册定时任务。当用户要求在未来某个时间执行操作时调用。\n\n"
-                    "参数：\n"
-                    "- timestamps: 绝对时间戳列表（毫秒）。一次传入所有时间点，不要拆多次调用。"
-                    "例如「15秒后开始每10秒共3次」→ 传 3 个值 [t_sent+15000, t_sent+25000, t_sent+35000]。\n"
-                    "- message: 触发时要执行的任务内容。\n\n"
-                    "注意：根据上下文标注的 t_sent 自行计算绝对时间戳。"
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "timestamps": {"type": "array", "items": {"type": "integer"}},
-                        "message": {"type": "string"},
-                    },
-                    "required": ["timestamps", "message"]
-                },
-                fn=None,
-            ),
-            ToolDef(
-                name="shice_schedule_list",
-                description="列出所有活跃的时策定时任务及其状态（总数/已触发/剩余）。",
-                parameters={"type": "object", "properties": {}, "required": []},
-                fn=None,
-            ),
-            ToolDef(
-                name="shice_schedule_cancel",
-                description=(
-                    "取消指定的时策任务。\n"
-                    "参数 job_id: 任务 ID（通过 shice_schedule_list 获取）。"
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {"job_id": {"type": "string"}},
-                    "required": ["job_id"]
-                },
-                fn=None,
-            ),
-            # ── 系统工具 ──
-            ToolDef(
-                name="bash",
-                description=(
-                    "执行 shell 命令。command: 要执行的命令。"
-                    "结果包含 stdout 和 stderr。"
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "command": {"type": "string"},
-                    },
-                    "required": ["command"]
-                },
-                fn=None,
-            ),
-            ToolDef(
-                name="web_fetch",
-                description=(
-                    "获取网页内容。url: 网页地址。"
-                    "返回提取的文本内容。"
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "url": {"type": "string"},
-                    },
-                    "required": ["url"]
-                },
-                fn=None,
-            ),
-            ToolDef(
-                name="web_search",
-                description=(
-                    "搜索网页。query: 搜索关键词。"
-                    "max_results: 最大结果数 (默认 5)。"
-                    "返回搜索结果的标题、摘要和链接。"
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string"},
-                        "max_results": {"type": "integer"},
-                    },
-                    "required": ["query"]
-                },
-                fn=None,
-            ),
-        ]
-        _tools_built = True
 
 
 # —————————执行———————————
