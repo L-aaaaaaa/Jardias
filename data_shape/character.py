@@ -31,3 +31,7 @@ class L1Summary:
     people: list[str] = field(default_factory=list)   # 关联人物列表
     msg_indices: tuple[int, int] = (0, 0)  # (from_msg_idx, to_msg_idx) 原始消息范围
     source: str = "auto"      # "auto"=阈值触发压缩  "manual"=用户主动归档
+    time_ranges: list[list[str]] = field(default_factory=list)  # 归档的多区间
+                              # 单段归档存一个 [(start,end)]；聚合归档存多个；
+                              # backward compat: 旧数据无此字段、数组空、压缩时取整体 [start_time, end_time]
+    range_msg_indices: list[list[int]] = field(default_factory=list)  # 每个区间的绝对消息索引

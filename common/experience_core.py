@@ -191,32 +191,27 @@ def _render_single_message(msg: dict) -> list[str]:
 
     entries: list[str] = []
 
-    # assistant 有 tool_calls：先渲染 text（如果有），再拆出 tool_calls 条目
+    # assistant 有 tool_calls：只渲染 tool_call 条目，不渲染内独白 content。
+    # 设计原则（7.md）：experience.md == 真实 messages 的对话流。
+    # LLM 在调工具前的"内独白"（content）属于思考过程，不是用户可见的回复；
+    # 仅 tool_call 行为 + tool result 是用户实际看到的痕迹。
     if role == "assistant" and msg.get("tool_calls"):
-        tc_entries = []
+        tc_lines: list[str] = ["[tool_calls]"]
         for tc in msg.get("tool_calls", []):
             fn = tc.get("function", {})
             name = fn.get("name", "?")
-            # park_topic / recall_topic 也照常渲染——让 assistant(tool_calls)
-            # 与对应的 tool msg 在 "## 近期对话原文" 形成完整往返痕迹,
-            # 不再单独建 ## 已召回话题 section(7.md 设计原则:单一真相)。
             args = fn.get("arguments", "")
             if isinstance(args, str) and len(args) > 120:
                 args = args[:120] + "..."
             elif isinstance(args, dict):
                 args = json.dumps(args, ensure_ascii=False)
-            tc_content = f"[tool_call] {name}({args})"
-            tc_fence = _choose_fence(tc_content)
-            tc_entries.append(f"### [{ts}] tool({name})\n\n{tc_fence}text\n{tc_content}\n{tc_fence}")
-
-        if content:
-            fence = _choose_fence(content)
-            entries.append(f"### [{ts}] {role}\n\n{fence}text\n{content}\n{fence}")
-        entries.extend(tc_entries)
-        return entries
+            tc_lines.append(f"  {name}({args})")
+        tc_content = "\n".join(tc_lines)
+        tc_fence = _choose_fence(tc_content)
+        return [f"### [{ts}] assistant\n\n{tc_fence}text\n{tc_content}\n{tc_fence}"]
 
     # tool 消息：加 name 前缀
-    # 设计原则：park_topic/recall_topic 的 tool result 就是 messages 列表里
+    # 设计原则：archive_recent_talk/recall_topic 的 tool result 就是 messages 列表里
     # assistant 实际看到的 tool msg content,原样渲染到 "## 近期对话原文" 段,
     # 与 7.md 示意一致——单一真相源,experience.md == 真实 messages。
     if role == "tool":
@@ -349,7 +344,7 @@ def _parse_user_input_from_message3(message3: str) -> dict | None:
 
 def update_experience(
     character_name: str,
-    operation: Literal["用户输入", "对话完成", "dump", "recall", "park"],
+    operation: Literal["用户输入", "对话完成", "dump", "recall", "archive"],
     data: dict,
 ) -> None:
     """更新 experience.md 的统一入口。
@@ -359,7 +354,8 @@ def update_experience(
         - "对话完成": data = {} — 只清空 message3（对话已由 dump 写入）
         - "dump": data = {messages: list[dict]} — 增量追加 messages[3:] 到近期对话原文
         - "recall": data = {topic_id, recall_block, insert_before?} — 召回内容以 tool 块形态注入
-        - "park": data = {messages, summary_entry} — 重写近期对话原文 + 追加摘要条目
+        - "archive": data = {messages, summary_entry} — 重写近期对话原文 + 追加摘要条目
+            （archive_recent_talk 工具调用）
     """
     path = get_character_dir(character_name) / "experience.md"
 
@@ -454,22 +450,21 @@ def update_experience(
         # 这里保留 noop 分支仅为兼容上游调用。
         return
 
-    elif operation == "park":
+    elif operation == "archive":
         # data = {messages, summary_entry, visible_msgs,
-        #         tool_call_args?: str, tool_result?: str}
+        #         tool_call_args?: str, tool_result?: str, archive_ts?: str}
         messages = data["messages"]
         summary_entry = data["summary_entry"]
-        tool_call_args = data.get("tool_call_args", "")
-        tool_result = data.get("tool_result", "")
+        # tool_call_args / tool_result / archive_ts 在 dump 阶段由
+        # _render_messages_to_recent_section 自然渲染(assistant(tool_calls) 中的
+        # archive_recent_talk tool_call 不再被 skip),不在这里手动构造条目。
+        # 字段保留仅为兼容上游调用;实际不参与本分支渲染逻辑。
 
         # 1. 渲染新的近期对话原文
         #    注意：必须用 visible_msgs（已经过 _gaps_between_covered 过滤），
         #    而不是 messages[3:]（后者包含全部对话消息，会把已归档段也渲染回去）。
-        #    重要变更：不再追加 park_synthetic 伪消息到"近期对话原文"区。
-        #    park 工具调用条目将由后续 dump_experience 在 dump 阶段渲染
-        #    (assistant(tool_calls) 中的 park_topic tool_call 在 dump 渲染时
-        #    不再被 skip),这样所有对话原文按 time 排序,不会出现
-        #    "park_synthetic 在中段、其他消息在末尾"的乱序问题。
+        #    archive_recent_talk 工具调用本身在 dump 渲染时照常写入"近期对话原文"区,
+        #    所有对话原文按 time 排序,不会出现乱序。
         dialogue_msgs = data.get("visible_msgs") or (messages[3:] if len(messages) > 3 else [])
 
         new_recent = _render_messages_to_recent_section(dialogue_msgs)
@@ -516,8 +511,6 @@ def update_experience(
         new_json = json.dumps(arr, ensure_ascii=False, indent=2)
 
         # 3. 直接重建 blocks[2]，保证双骨架顺序正确
-        #    同时追加 park_topic 工具调用的可见条目（用 summary 的元数据手动渲染，
-        #    避免依赖 _render_single_message 对 name=park_topic 的 skip 逻辑）
         blocks[2] = (
             "# 历史\n\n"
             f"## 摘要\n\n```json\n{new_json}\n```\n\n"
@@ -525,23 +518,22 @@ def update_experience(
             + new_recent
         )
 
-        # 4. 更新 _dump_meta.json（归档后重置 written_len = 压缩后的物理消息数）
-        #    重要：written_len 必须对应 disk history.json 的物理消息数，
-        #    而不是 messages 的长度。messages = [system]*3 + visible_msgs，
-        #    其中 [system]*3 是占位符，不存在于 history.json。
-        #    如果写成 len(messages) 会比实际多 3，导致后续 dump 操作
-        #    用 current_written+ i 当物理索引做 covered 判断时错位，
-        #    误过滤掉本该渲染的消息（如 park tool_call）。
-        meta_path = path.parent / "_dump_meta.json"
-        meta = {}
-        if meta_path.exists():
+        # 4. 更新 _dump_meta.json（归档后 written_len 必须 = history.json 的物理总消息数）
+        #    关键：dump_experience 里 `len(dialogue_msgs)` 是从 disk history.json 读的，
+        #    包含 system、user、assistant、assistant(tool_calls)、tool 等全部条目。
+        #    written_len 也必须是同一个值，否则下次 dump 时 current_written vs dialogue_msgs
+        #    错位 → 把已渲染的 archive 工具调用/未渲染的对话消息再次重复追加 → experience.md 重复内容。
+        #    不能用 visible_msgs 长度（visible 是去掉被覆盖段后的，与 disk 长度不一样）。
+        history_path = path.parent / "history.json"
+        physical_total = data.get("physical_total")
+        if physical_total is None and history_path.exists():
             try:
-                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                physical_total = len(json.loads(history_path.read_text(encoding="utf-8")))
             except Exception:
-                meta = {}
-        # 计算磁盘上的物理消息数：visible_msgs 的每条对应一条 disk message
-        physical_msg_count = len(data.get("visible_msgs") or messages[3:] if len(messages) > 3 else [])
-        meta["written_len"] = physical_msg_count
+                physical_total = 0
+        if physical_total is None:
+            physical_total = len(messages)
+        meta["written_len"] = physical_total
         meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
 
     # 写入文件

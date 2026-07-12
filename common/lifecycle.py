@@ -52,8 +52,8 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
                 image_url=image_url, switch_note=switch_note,
                 round_context=round_context, character_name=ctx.character_name)
             # ── 关键:把本轮 user 立即同步写入 history.messages,并立即落盘 ──
-            # 落盘的目的是:park_topic/recall_topic 工具被调时,如果它们直接
-            # json.load(history.json),必须能看到本轮 user。详见 _handle_park_topic
+            # 落盘的目的是:archive_recent_talk/recall_topic 工具被调时,如果它们直接
+            # json.load(history.json),必须能看到本轮 user。详见 _handle_archive_recent_talk
             # 的 disk-race bug 修复记录。
             ctx.history.append_user(user_input, ts=_dt.now().strftime("%Y-%m-%d %H:%M:%S"))
             ctx.history.save()
@@ -73,7 +73,7 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
         def _on_history_save():
             """实时镜像:将 LLM 视角中"本轮新增的中间产物"追加到 ctx.history.messages 末尾。
             跳过无 tool_calls 的 assistant(它是最终文本,由 _post_round 写入)。
-            立即落盘,确保 park_topic/recall_topic 工具被调时 disk 是最新的。
+            立即落盘,确保 archive_recent_talk/recall_topic 工具被调时 disk 是最新的。
             """
             appended = False
             for msg in messages[processed_msg_idx[0]:]:
@@ -94,7 +94,7 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
                 # 无 tool_calls 的 assistant(可能含 tool role 'user' 提示或 send_to_character 后注入)不追加,
                 # 全部由 _post_round 收尾处理。
             processed_msg_idx[0] = len(messages)
-            # 落盘:后续 park_topic/recall_topic 工具必须能从 disk 读到本轮内容
+            # 落盘:后续 archive_recent_talk/recall_topic 工具必须能从 disk 读到本轮内容
             if appended:
                 ctx.history.save()
 
@@ -531,6 +531,13 @@ async def conversation_loop(ctx, allow_switch: bool = False):
             turn_ts = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
             round_ok, messages = await _run_turn(ctx, user_words, image_url, switch_note, round_context)
             round_context = _collect_round_meta(round_ok, ctx)
+            # 关键修复（提示符延迟）：把 _stdin_ready.set() 提前到 _run_turn
+            # 完成之后立刻执行,而不是等到 _post_round_async 走完。
+            # 这样在 dump_experience / check_and_compress / 磁盘落盘等
+            # 可能消耗数秒的期间,用户已经能看到 # 【用户输入】： 提示符,
+            # 可以放心输入。_post_round_async 完成后 main loop 会顺次
+            # 走完剩余步骤(_stdin_ready 已经 set,二次 set() 是 noop)。
+            _stdin_ready.set()
             await _post_round_async(ctx, user_words, messages, round_ok, ts=turn_ts, round_context=round_context)
             _stdin_ready.set()
 

@@ -323,15 +323,15 @@ async def _handle_summarize_conversation(arguments: dict) -> str:
     return "\n".join(lines)
 
 
-async def _handle_park_topic(arguments: dict) -> str:
-    """将最近 N 轮对话主动归档为话题摘要。
+async def _handle_archive_recent_talk(arguments: dict) -> str:
+    """按时间戳精确归档一段对话为话题摘要。
     用户指令如「转为摘要」「归档这个话题」时调用。
     """
     from common.experience_core import update_experience
     import json
     from character import get_history_path
     from character.summarizer import (
-        park_topic as _park_topic,
+        archive_recent_talk as _archive_recent_talk,
         load_compression_log,
         _gaps_between_covered,
     )
@@ -341,10 +341,29 @@ async def _handle_park_topic(arguments: dict) -> str:
     except ImportError:
         history_json_to_markdown = None
 
-    lookback_turns = int(arguments.get("lookback_turns", 8) or 8)
-    # 修复：LLM 偶尔会传 0 或负数，确保是正整数
-    if lookback_turns <= 0:
-        lookback_turns = 8
+    # 解析参数：单段 (time_range_start/time_range_end) 或聚合 (time_ranges) 二选一
+    time_range_start = (arguments.get("time_range_start") or "").strip()
+    time_range_end = (arguments.get("time_range_end") or "").strip()
+    time_ranges_raw = arguments.get("time_ranges")
+    time_ranges: list[list[str]] = []
+    if time_ranges_raw:
+        # LLM 可能传 JSON 字符串或 Python list
+        if isinstance(time_ranges_raw, str):
+            try:
+                import json as _json
+                parsed = _json.loads(time_ranges_raw)
+                if isinstance(parsed, list):
+                    time_ranges = [[str(x[0]), str(x[1])] for x in parsed if isinstance(x, (list, tuple)) and len(x) >= 2]
+            except Exception:
+                # 尝试按换行/分号 split；每个区间内部按逗号 split
+                for line in time_ranges_raw.split("\n"):
+                    parts = [p.strip() for p in line.split(",")]
+                    if len(parts) == 2 and parts[0] and parts[1]:
+                        time_ranges.append([parts[0], parts[1]])
+        elif isinstance(time_ranges_raw, list):
+            for item in time_ranges_raw:
+                if isinstance(item, (list, tuple)) and len(item) >= 2:
+                    time_ranges.append([str(item[0]), str(item[1])])
     topic_hint = arguments.get("topic_hint", "")
     topic_label = arguments.get("topic_label", "")
     people_str = arguments.get("people", "")
@@ -357,30 +376,86 @@ async def _handle_park_topic(arguments: dict) -> str:
     with open(history_path, "r", encoding="utf-8") as f:
         messages: list[dict] = json.load(f)
 
-    # 准备工具调用的可见性数据：原始 arguments JSON + park 时间戳
-    # 这样 update_experience("park") 可以把 park 工具调用本身渲染到 experience.md
-    # 否则 _render_single_message 会 skip name=park_topic 的 tool 消息
+    # ── 话题纯度校验（防止 LLM 用连续区间把多个话题混在一起归档）──
+    # 在 archive 真正执行前，校验每个候选区间内的 user 消息是否只含一个话题标记。
+    # 若发现区间跨多个话题，直接报错让 LLM 改用聚合模式。
+    import re as _re
+    _TOPIC_RE = _re.compile(r"话题\s*([A-Za-z0-9一二三四五六七八九十百千零]+)")
+
+    def _extract_topic_markers(text: str) -> set[str]:
+        if not isinstance(text, str):
+            return set()
+        return set(_TOPIC_RE.findall(text))
+
+    def _validate_range_purity(start_ts: str, end_ts: str) -> tuple[bool, str]:
+        """校验 (start_ts, end_ts) 区间内所有 user 消息的话题标记是否一致。
+
+        返回 (ok, error_msg)。ok=False 时 error_msg 描述冲突并提示用聚合模式。
+        """
+        def _msg_ts(m: dict) -> str:
+            return (m.get("time") or "")[:19]
+
+        slice_msgs = [m for m in messages
+                      if m.get("role") == "user"
+                      and start_ts <= _msg_ts(m) <= end_ts]
+        if not slice_msgs:
+            return True, ""
+        all_markers: set[str] = set()
+        for m in slice_msgs:
+            all_markers.update(_extract_topic_markers(m.get("content", "")))
+        if len(all_markers) <= 1:
+            return True, ""
+        sorted_markers = sorted(all_markers)
+        return False, (
+            f"区间 [{start_ts}, {end_ts}] 内包含多个不同话题标记 {sorted_markers}。"
+            f"**你必须改用聚合模式**：为每个话题标记单独构造一个区间，"
+            f"例如 time_ranges=[[\"{start_ts}\", \"<第 1 个话题的末条 assistant 时间>\"], "
+            f"[\"<第 2 个话题的 user 时间>\", \"{end_ts}\"]], "
+            f"然后归档其中**一个**话题（其余话题留待下次分别归档）。"
+            f"不要用单段模式把不同话题混在一起。"
+        )
+
+    # 单段模式：先做纯度校验
+    if time_range_start and time_range_end:
+        ok, err = _validate_range_purity(time_range_start, time_range_end)
+        if not ok:
+            return f"[Error] {err}"
+
+    # 聚合模式：每个区间都做纯度校验
+    if time_ranges:
+        for r in time_ranges:
+            if len(r) >= 2 and r[0] and r[1]:
+                ok, err = _validate_range_purity(r[0], r[1])
+                if not ok:
+                    return f"[Error] {err}"
+
+    # 准备工具调用的可见性数据：原始 arguments JSON + 归档时间戳
     tool_call_args = json.dumps(arguments, ensure_ascii=False)
-    park_ts = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+    archive_ts = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
 
     try:
-        summary = await _park_topic(
+        summary = await _archive_recent_talk(
             character_name=_current_actor,
             messages=messages,
-            lookback_turns=lookback_turns,
+            time_range_start=time_range_start,
+            time_range_end=time_range_end,
+            time_ranges=time_ranges if time_ranges else None,
             topic_hint=topic_hint,
             topic_label=topic_label,
             people=people,
         )
 
         # 重新渲染近期对话原文（按 compression_log 过滤）
+        #    manual_only=True：只看 archive_recent_talk 自己的覆盖，
+        #    不被 auto_summarize 后台任务的覆盖段干扰（"扰乱测试"的根因）。
         log = load_compression_log(_current_actor)
-        gaps = _gaps_between_covered(len(messages), log)
+        gaps = _gaps_between_covered(len(messages), log, manual_only=True)
         visible_msgs = []
         for start, end in gaps:
             visible_msgs.extend(messages[start:end + 1])
 
-        # 构建 summary_entry
+        # 构建 summary_entry：聚合归档把整个范围合并为一个 entry
+        # range_msg_indices 用于 _build_recall_block 召回时分段拼接
         summary_entry = {
             "id": summary.id,
             "topic_label": summary.topic_label or summary.topic or "归档话题",
@@ -389,32 +464,36 @@ async def _handle_park_topic(arguments: dict) -> str:
             "user_turns": summary.user_turns,
             "detail": summary.detail,
             "msg_indices": list(summary.msg_indices),
+            "time_ranges": summary.time_ranges,
+            "range_msg_indices": summary.range_msg_indices,
         }
 
-        # 先把工具结果字符串准备好（同时给 LLM 返回 + 给 experience.md 写）
+        # 工具结果字符串
         label = summary.topic_label or summary.topic or "归档话题"
         people_str_out = "、".join(summary.people) if summary.people else "无特定人物"
+        range_count = len(summary.range_msg_indices) if summary.range_msg_indices else 1
         tool_result = (
             f"[OK] 话题「{label}」已归档\n"
             f"  人物: {people_str_out}\n"
             f"  轮次: {summary.user_turns} 轮\n"
+            f"  区间数: {range_count}\n"
             f"  时间: {summary.start_time[:19] if summary.start_time else '?'} ~ "
             f"{summary.end_time[:19] if summary.end_time else '?'}\n"
             f"  摘要: {summary.detail[:120]}{'...' if len(summary.detail) > 120 else ''}\n"
             f"  ID: {summary.id}"
         )
 
-        # 更新 experience.md：重写近期对话原文 + 追加摘要条目
-        # 同步传入 tool_call_args/tool_result/park_ts，让 park 工具调用本身
-        # 在 experience.md 中可见（_render_single_message 会 skip name=park_topic
-        # 的 tool 消息，必须由 update_experience 手动构造条目）。
-        update_experience(_current_actor, "park", {
+        # 更新 experience.md
+        # physical_total = history.json 当前真实长度，让 archive 写完 written_len 后，
+        # 下次 dump_experience 不会把已渲染的工具调用重复追加。
+        update_experience(_current_actor, "archive", {
             "messages": [{"role": "system"}] * 3 + visible_msgs,
             "visible_msgs": visible_msgs,
             "summary_entry": summary_entry,
             "tool_call_args": tool_call_args,
             "tool_result": tool_result,
-            "park_ts": park_ts,
+            "archive_ts": archive_ts,
+            "physical_total": len(messages),
         })
 
         return tool_result
@@ -425,7 +504,7 @@ async def _handle_park_topic(arguments: dict) -> str:
             return (
                 f"[Error] {msg}\n"
                 "提示：当前没有可归档的新内容，所有未压缩的用户消息"
-                "均已被覆盖或处理。请直接告知用户该状态，**不要再次调用 park_topic**。"
+                "均已被覆盖或处理。请直接告知用户该状态，**不要再次调用 archive_recent_talk**。"
             )
         return f"[Error] {msg}"
     except Exception as e:
@@ -474,7 +553,7 @@ def _handle_recall_topic(arguments: dict) -> str:
                 "recall_block": block,
             })
             return (
-                f"[话题召回] 找到「{label}」（ID: {summary.id}）\n"
+                f"[话题回想] 找到「{label}」（ID: {summary.id}）\n"
                 f"将以下内容注入上下文：\n\n{block}"
             )
         except ValueError as e:
@@ -1226,23 +1305,68 @@ def _ensure_tools():
             ),
             # ── 话题归档工具 ──
             ToolDef(
-                name="park_topic",
+                name="archive_recent_talk",
                 description=(
-                    "将最近 N 轮对话主动归档为话题摘要，释放上下文空间。\n\n"
+                    "按时间戳归档一段或多段对话为话题摘要，释放上下文空间。\n\n"
                     "**使用场景**：用户说「转为摘要」「归档这个话题」「先聊别的」时调用。\n\n"
-                    "**效果**：最近 N 轮对话被提炼为结构化摘要存入磁盘，下轮起不再占用上下文。\n"
+                    "**效果**：指定时间范围内的对话被提炼为结构化摘要存入磁盘，下轮起不再占用上下文。"
                     "后续可通过 recall_topic 精确召回继续讨论。\n\n"
-                    "参数：\n"
-                    "- lookback_turns: 回溯轮数（默认 8），越多信息越完整但摘要越长\n"
-                    "- topic_hint: 话题方向提示（可选，如「价值本质」「电影推荐」）\n"
-                    "- topic_label: 用户指定的话题标签（可选，优先使用，如已有则覆盖）\n"
-                    "- people: 关联人物列表，逗号分隔（可选，如「张三,李四」）\n\n"
+                    "**重要原则：传参即结果**——你传入什么时间戳，工具就归档什么范围；工具不会自作主张"
+                    "扩展或收缩区间。归档前请从上下文里**直接读取**你看到的时间戳字面值，不要估算。\n\n"
+                    "**两种模式（二选一）**：\n"
+                    "1. **单段模式**（兼容性）：传 time_range_start + time_range_end，归档一段连续对话。\n"
+                    "2. **聚合模式**（推荐）：传 time_ranges 数组，每个元素是 [start, end]，可离散不连续。\n"
+                    "   工具一次性合并为同一条 L1、共享同一个 id，召回时一次性注入所有原始片段。\n\n"
+                    "**参数语义**：\n"
+                    "- time_range_start: 单段模式起始时间戳（与 time_range_end 配合使用）\n"
+                    "- time_range_end: 单段模式结束时间戳\n"
+                    "- time_ranges: 聚合模式数组，例如 `[[\"2026-07-12 10:01:00\", \"2026-07-12 10:01:30\"], "
+                    "[\"2026-07-12 10:03:00\", \"2026-07-12 10:03:30\"]]`。留空字符串表示'最早/末尾'。\n"
+                    "- topic_hint: 话题方向提示（可选）\n"
+                    "- topic_label: 用户指定的话题标签（可选，优先使用）\n"
+                    "- people: 关联人物列表，逗号分隔（可选）\n\n"
+                    "**单段 vs 聚合**：当一个话题在对话中被其他话题打断、分散成 N 个不连续片段时，"
+                    "**用聚合模式传 N 个区间**，一次调用即可。多区间合并为同一条 L1 后，"
+                    "recall_topic 召回时也是 1 次调用把所有片段拉回来——这是和 7.md 示范一致的行为。\n\n"
+                    "**触发条件（严格）**：仅当用户**显式说出归档意图**（「归档 / 总结 / 转摘要 / 先放一放 / 收尾 / 聊完了 / 这个话题结束」）"
+                    "才调用本工具。**用户只发话题标记（如「话题1」「话题2」）不算归档指令**——"
+                    "那是用户在测试对话连通性或标记语义，不是让你归档。\n\n"
+                    "**三种模式（按优先级）**：\n"
+                    "1. **话题标签模式（推荐，最简单）**：只传 `topic_label=\"话题1\"`，不传任何时间戳。"
+                    "工具自动扫描所有未归档 user 消息，匹配含「话题1」的 user，"
+                    "为每条 user 构造独立区间 [user.time, user 后第一条 assistant.time]，"
+                    "合并为同一条 L1。**无需你手动算时间戳**。\n"
+                    "2. **聚合模式**：传 `time_ranges=[[\"ts1\", \"ts2\"], [\"ts3\", \"ts4\"]]`，"
+                    "适用于精确指定离散不连续片段（每片段必须纯单一话题）。\n"
+                    "3. **单段模式**：传 `time_range_start` + `time_range_end`，仅适用于**纯单一话题连续区间**。\n\n"
+                    "**禁止行为（每次回复前自检）**："
+                    "1) 不要主动识别对话里的话题边界。"
+                    "2) 不要猜测用户「可能想归档什么」。"
+                    "3) 不要在回复里暗示「我看到你提到的话题X / 话题Y」。"
+                    "4) **不要主动提议继续归档其他话题**——用户没说要归档的话题就不该提议。"
+                    "5) 工具调用成功后只回复一句确认，不要重复摘要细节、不要列 ID、不要列时间范围、不要问要不要继续。\n\n"
+                    "**区间纯度硬约束**：单段 / 聚合模式（time_range*）只允许区间内 user 消息含**同一话题标记**。"
+                    "若区间跨多个不同话题（例如 [11:07:28, 11:07:39] 同时含「话题1」「话题2」），"
+                    "工具会拒绝执行并报错——**这是预期行为**，看到错误后立即改用「话题标签模式」传 topic_label 即可，"
+                    "**不要在单段/聚合模式里反复试不同的 time_range 组合**。\n\n"
+                    "**时间戳读取**：从上下文「近期对话原文」区直接复制 user / assistant 的 `### [YYYY-MM-DD HH:MM:SS] role` 时间戳字面值，不要估算。\n\n"
                     "返回归档后的摘要内容。"
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
-                        "lookback_turns": {"type": "integer"},
+                        "time_range_start": {"type": "string"},
+                        "time_range_end": {"type": "string"},
+                        "time_ranges": {
+                            "type": "array",
+                            "items": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "minItems": 2,
+                                "maxItems": 2,
+                            },
+                            "description": "聚合模式时间区间数组，每元素 [start, end]",
+                        },
                         "topic_hint": {"type": "string"},
                         "topic_label": {"type": "string"},
                         "people": {"type": "string"},
@@ -1254,9 +1378,11 @@ def _ensure_tools():
             ToolDef(
                 name="recall_topic",
                 description=(
-                    "召回已归档的话题摘要，注入上下文继续讨论。\n\n"
+                    "召回已归档的话题摘要，将原始对话注入上下文继续讨论。\n\n"
                     "**使用场景**：用户说「继续聊之前的话题」「回顾价值本质」「我们上次说的」时调用。\n\n"
-                    "**效果**：将话题的结构化摘要注入上下文，角色可以「续谈」而非「复述」。\n\n"
+                    "**效果**：调用后原始对话内容会被注入到上下文，"
+                    "角色可以「续谈」而非「复述」（与 7.md 示范一致：只回放原文，不加结构化包装）。"
+                    "聚合归档的多区间也会被一次性全部召回。\n\n"
                     "参数（至少传一个）：\n"
                     "- topic_label: 话题标签模糊匹配（如「价值本质」「电影」）\n"
                     "- topic_id: 精确匹配归档 ID（如 T-20260707-143020）\n"
@@ -1438,7 +1564,7 @@ _BUILTIN_HANDLERS.update({
     "update_runtime": _handle_update_runtime,
     "update_identity": _handle_update_identity,
     "summarize_conversation": _handle_summarize_conversation,
-    "park_topic": _handle_park_topic,
+    "archive_recent_talk": _handle_archive_recent_talk,
     "recall_topic": _handle_recall_topic,
     "create_character": _handle_create_character,
     "list_characters": _handle_list_characters,

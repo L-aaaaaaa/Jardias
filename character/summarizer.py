@@ -122,6 +122,10 @@ def l1summary_to_dict(s: L1Summary) -> dict:
         d["msg_indices"] = list(s.msg_indices)
     if s.source and s.source != "auto":
         d["source"] = s.source
+    if s.time_ranges:
+        d["time_ranges"] = s.time_ranges
+    if s.range_msg_indices:
+        d["range_msg_indices"] = s.range_msg_indices
     return d
 
 
@@ -140,6 +144,8 @@ def l1summary_from_dict(d: dict) -> L1Summary:
         people=d.get("people", []),
         msg_indices=tuple(d.get("msg_indices", [0, 0])),
         source=d.get("source", "auto"),
+        time_ranges=d.get("time_ranges", []) or [],
+        range_msg_indices=d.get("range_msg_indices", []) or [],
     )
     if not inst.summary and inst.topic:
         inst.summary = [{"from": 0, "to": inst.user_turns,
@@ -445,68 +451,192 @@ def build_l1_context(character_name: str, max_items: int = 3) -> str:
 
 
 # ═══════════════════════════════════════════════════════
-# 话题归档：park_topic
+# 话题归档：archive_recent_talk
 # ═══════════════════════════════════════════════════════
 
-async def park_topic(character_name: str, messages: list[dict],
-                     lookback_turns: int = 8,
-                     topic_hint: str = "",
-                     topic_label: str = "",
-                     people: list[str] = None) -> L1Summary:
-    """将最近 N 轮对话归档为一个话题摘要。
+async def archive_recent_talk(character_name: str, messages: list[dict],
+                              time_range_start: str = "",
+                              time_range_end: str = "",
+                              time_ranges: list[list[str]] | None = None,
+                              topic_hint: str = "",
+                              topic_label: str = "",
+                              people: list[str] = None) -> L1Summary:
+    """按时间戳精确归档一段对话为话题摘要。
 
-    由 builtin.py 的 park_topic 工具调用。
+    由 builtin.py 的 archive_recent_talk 工具调用。
     保存到 L1 目录，source=manual。
+
+    核心原则：传参即结果。
+    - 单段模式（向后兼容）：time_range_start / time_range_end 为字符串。
+    - 聚合模式：time_ranges 为 [[start1, end1], [start2, end2], ...] 数组，
+      多区间一次性合并为同一条 L1、共享同一个 id；compression_log 每区间一条记录。
 
     Args:
         character_name: 当前角色名
         messages: history.json 的完整消息列表
-        lookback_turns: 回溯多少轮用户消息（默认 8 轮）
-        topic_hint: 话题提示（供 LLM 参考）
-        topic_label: 用户指定的话题标签（优先使用）
+        time_range_start: 单段模式起始时间戳 'YYYY-MM-DD HH:MM:SS'
+        time_range_end: 单段模式结束时间戳 'YYYY-MM-DD HH:MM:SS'
+        time_ranges: 聚合模式时间戳区间数组，每个元素 [start, end]，按时间升序。
+        topic_hint: 话题提示
+        topic_label: 用户指定的话题标签（优先）
         people: 用户指定的人物列表
     """
     if people is None:
         people = []
 
-    # 找到最近 lookback_turns 轮未被压缩覆盖的用户消息
+    # ── 归一化输入为区间数组 ──
+    # 先把 comp_log 加载完（topic_label 自动匹配模式要查 compression_log）
     try:
         comp_log = load_compression_log(character_name)
     except Exception:
         comp_log = []
-    user_indices = [i for i, m in enumerate(messages) if not _is_msg_covered(i, comp_log) and m["role"] == "user"]
-    if not user_indices:
-        raise ValueError("无新用户消息可归档（全部已被压缩覆盖）")
-    recent_user_indices = user_indices[-lookback_turns:]
-    abs_from = recent_user_indices[0]
-    # 关键修复：head-gap（前导孤儿工具调用）
-    try:
-        last_covered = max((rec.get("abs_to", -1) for rec in comp_log), default=-1)
-        uncovered = [i for i in range(len(messages)) if not _is_msg_covered(i, comp_log)]
-        if uncovered and uncovered[0] < abs_from:
-            abs_from = uncovered[0]
-        if last_covered + 1 < abs_from:
-            abs_from = last_covered + 1
-    except Exception:
-        pass
-    # to 取这轮用户的 assistant 回复为止
-    abs_to = user_indices[-1]
-    if abs_to + 1 < len(messages):
-        # 包含 assistant 回复
-        abs_to = abs_to + 1
+
+    # topic_label 自动匹配模式专用：直接返回 [a_from, a_to] 索引对，
+    # 跳过 _resolve_pair 的"<=" 区间搜索（那会引入杂质消息）。
+    auto_label_idx_ranges: list[tuple[int, int]] = []
+
+    if time_ranges:
+        ranges = sorted([(s.strip(), e.strip()) for s, e in time_ranges if s and e],
+                        key=lambda x: x[0])
+        if not ranges:
+            raise ValueError("time_ranges 数组不能为空或全为空字符串")
+    elif time_range_start.strip() or time_range_end.strip():
+        # 单段模式
+        ranges = [(time_range_start.strip(), time_range_end.strip())]
+    elif topic_label:
+        # ── 话题标签自动匹配模式（新增）──
+        # LLM 只传 topic_label（如"话题1"），工具自动在未归档 user 中
+        # 找含该标签的所有 user，并为每条 user 构造独立区间
+        # [user.time, user 后第一条 assistant.time]。
+        # 解决「秒级时间戳相同无法精确切分」的难题：
+        # 当话题1和话题2在同一秒交错出现时，LLM 无法用 time_range 切分，
+        # 但可以靠文本话题标记精确定位 user 消息。
+        label_re = _build_topic_label_regex(topic_label)
+        auto_ranges: list[tuple[str, str]] = []
+        for i, m in enumerate(messages):
+            if _is_msg_covered(i, comp_log):
+                continue
+            if m.get("role") != "user":
+                continue
+            content = m.get("content", "")
+            if not isinstance(content, str):
+                continue
+            # 跳过归档指令自身（"归档话题1" 等）—— 它是触发归档的元命令，
+            # 不该被识别为"话题1的对话"。
+            if _is_archive_trigger(content):
+                continue
+            if not label_re.search(content):
+                continue
+            # 找该 user 之后第一条 assistant 的索引
+            j = i + 1
+            while j < len(messages) and messages[j].get("role") != "assistant":
+                j += 1
+            if j >= len(messages):
+                continue
+            u_ts = (m.get("time") or "")[:19]
+            a_ts = (messages[j].get("time") or "")[:19]
+            if u_ts and a_ts and u_ts <= a_ts:
+                auto_ranges.append((u_ts, a_ts))
+                # 直接记下索引对，避免后面 _resolve_pair 的"<=" 区间搜索
+                # 把范围内其它 user 也吞进来
+                auto_label_idx_ranges.append((i, j))
+        if not auto_ranges:
+            raise ValueError(
+                f"未找到含话题标签「{topic_label}」的未归档 user 消息。"
+                f"请确认该标签存在于近期对话原文的 user 内容中。"
+            )
+        ranges = sorted(auto_ranges, key=lambda x: x[0])
     else:
-        abs_to = abs_to
+        raise ValueError("必须传 time_range_start/end、time_ranges 或 topic_label 至少一个")
 
-    slice_ = messages[abs_from:abs_to + 1]
-    if len(slice_) < 2:
-        raise ValueError(f"归档范围过小（{len(slice_)} 条消息）")
+    # 读取 compression_log 用来处理"留空字符串 = 取最早/到末尾"的边界
+    # (上面已在入口处加载,这里保留注释说明不再重复赋值)
+    if 'comp_log' not in locals():
+        comp_log = []
 
-    user_turns, start_t, end_t, _ = _analyze_slice(slice_)
+    def _msg_ts(m: dict) -> str:
+        return (m.get("time") or "")[:19]
+
+    def _resolve_pair(start_ts: str, end_ts: str) -> tuple[int, int]:
+        if start_ts:
+            cands = [i for i, m in enumerate(messages)
+                     if not _is_msg_covered(i, comp_log) and _msg_ts(m) >= start_ts]
+            if not cands:
+                raise ValueError(
+                    f"未找到时间戳 >= {start_ts} 的未归档消息。"
+                    "请确认时间戳格式（YYYY-MM-DD HH:MM:SS）并直接从 experience.md 的"
+                    "「近期对话原文」区复制。"
+                )
+            a_from = cands[0]
+        else:
+            uncovered = [i for i in range(len(messages))
+                         if not _is_msg_covered(i, comp_log)]
+            if not uncovered:
+                raise ValueError("无新用户消息可归档（全部已被压缩覆盖）")
+            a_from = uncovered[0]
+
+        if end_ts:
+            tail = [i for i in range(a_from, len(messages))
+                    if not _is_msg_covered(i, comp_log) and _msg_ts(messages[i]) <= end_ts]
+            if not tail:
+                raise ValueError(
+                    f"在时间范围 [{start_ts}, {end_ts}] 内未找到任何消息。"
+                    "请确认 end_ts 对应的消息确实存在于「近期对话原文」中。"
+                )
+            a_to = tail[-1]
+        else:
+            tail = [i for i in range(a_from, len(messages))
+                    if not _is_msg_covered(i, comp_log)]
+            if not tail:
+                raise ValueError(f"从 {start_ts or '最早未归档'} 起没有未归档消息可归档")
+            a_to = tail[-1]
+
+        if a_from > a_to:
+            raise ValueError(
+                f"归档范围非法：start={start_ts} > end={end_ts}"
+            )
+        return a_from, a_to
+
+    # 解析每个区间
+    resolved_ranges: list[tuple[str, str, int, int]] = []
+    if auto_label_idx_ranges:
+        # topic_label 自动匹配模式：直接用预计算的 (a_from, a_to) 索引对，
+        # 跳过 _resolve_pair 的"<=" 区间搜索。
+        for (a_from, a_to) in auto_label_idx_ranges:
+            s_time = messages[a_from].get("time", "")[:19]
+            e_time = messages[a_to].get("time", "")[:19]
+            resolved_ranges.append((s_time, e_time, a_from, a_to))
+    else:
+        for s_ts, e_ts in ranges:
+            a_from, a_to = _resolve_pair(s_ts, e_ts)
+            s_time = messages[a_from].get("time", "")[:19]
+            e_time = messages[a_to].get("time", "")[:19]
+            resolved_ranges.append((s_time, e_time, a_from, a_to))
+
+    if not resolved_ranges:
+        raise ValueError("无有效区间可归档")
+
+    overall_first_ts = resolved_ranges[0][2]
+    overall_last_ts = resolved_ranges[-1][3]
+    overall_start_time = resolved_ranges[0][0]
+    overall_end_time = resolved_ranges[-1][1]
+    all_slice_msgs = []
+    for _, _, a_from, a_to in resolved_ranges:
+        all_slice_msgs.extend(messages[a_from:a_to + 1])
+
+    user_turns, _, _, _ = _analyze_slice(all_slice_msgs)
     sid = f"T-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
-    # 构造提示文本
+    # 构造提示文本 — 每个区间拼一段
     hint_note = f"\n参考话题方向：{topic_hint}" if topic_hint else ""
-    conversation_text = _build_topic_text(slice_, max_chars=10000, abs_start=abs_from) + hint_note
+    conv_chunks = []
+    for idx, (s_time, e_time, a_from, a_to) in enumerate(resolved_ranges):
+        chunk = messages[a_from:a_to + 1]
+        text = _build_topic_text(chunk, max_chars=10000, abs_start=a_from)
+        conv_chunks.append(
+            f"### 区间 {idx + 1} / {len(resolved_ranges)} [{s_time} ~ {e_time}]\n\n{text}"
+        )
+    conversation_text = "\n\n".join(conv_chunks) + hint_note
 
     try:
         result = await _summarize_topic(conversation_text=conversation_text)
@@ -515,74 +645,96 @@ async def park_topic(character_name: str, messages: list[dict],
         summary_text = result.get("summary", "")
         key_points = result.get("key_points", [])
 
-        # 代码层兜底：people 字段必须基于工具调用 ground truth,
-        # 不能完全相信 LLM。如果 LLM 返回了 ground truth 中不存在的角色,
-        # 用 ground truth 过滤,避免误把无关角色写入摘要。
         if not people:
-            ground_truth_chars = _extract_send_to_character_targets(slice_)
+            ground_truth_chars = _extract_send_to_character_targets(all_slice_msgs)
             if ground_truth_chars:
-                # 优先保留 ground truth 中的角色;LLM 返回的如果不在 ground truth 中,丢弃
                 resolved_people = [p for p in resolved_people if p in ground_truth_chars]
-                # 如果过滤后为空,使用 ground truth
                 if not resolved_people:
                     resolved_people = ground_truth_chars
 
-        # 构造单 segment
-        segment = {
-            "from": abs_from,
-            "to": abs_to,
-            "topic": resolved_label or _guess_topic([]),
-            "detail": summary_text,
-        }
-        if key_points:
-            segment["key_points"] = key_points
+        segments: list[dict] = []
+        for idx, (s_time, e_time, a_from, a_to) in enumerate(resolved_ranges):
+            segments.append({
+                "from": a_from,
+                "to": a_to,
+                "topic": resolved_label or _guess_topic([]),
+                "detail": summary_text,
+                "segment_index": idx,
+                "segment_count": len(resolved_ranges),
+                "range_start": s_time,
+                "range_end": e_time,
+            })
 
         summary = L1Summary(
             id=sid,
-            start_time=start_t,
-            end_time=end_t,
-            message_count=len(slice_),
+            start_time=overall_start_time,
+            end_time=overall_end_time,
+            message_count=len(all_slice_msgs),
             user_turns=user_turns,
             topic=resolved_label or "",
             detail=summary_text,
-            summary=[segment],
+            summary=segments,
             topic_label=resolved_label,
             people=resolved_people,
-            msg_indices=(abs_from, abs_to),
+            msg_indices=(overall_first_ts, overall_last_ts),
             source="manual",
+            time_ranges=[[s, e] for s, e, _, _ in resolved_ranges],
+            range_msg_indices=[[a_from, a_to] for _, _, a_from, a_to in resolved_ranges],
         )
+        if key_points:
+            summary.key_events = key_points
     except Exception as e:
-        logger.warning(f"  [WARN] park_topic LLM failed ({e}), using fallback")
+        logger.warning(f"  [WARN] archive_recent_talk LLM failed ({e}), using fallback")
         topic = topic_label or topic_hint or "归档话题"
-        summary = L1Summary(
-            id=sid,
-            start_time=start_t,
-            end_time=end_t,
-            message_count=len(slice_),
-            user_turns=user_turns,
-            topic=topic,
-            detail=f"共 {user_turns} 轮对话（归档时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}）",
-            summary=[{
-                "from": abs_from,
-                "to": abs_to,
+        fallback_segments = []
+        for idx, (s_time, e_time, a_from, a_to) in enumerate(resolved_ranges):
+            fallback_segments.append({
+                "from": a_from,
+                "to": a_to,
                 "topic": topic,
                 "detail": f"共 {user_turns} 轮对话，涉及 {topic_hint or topic}。",
-            }],
+                "segment_index": idx,
+                "segment_count": len(resolved_ranges),
+                "range_start": s_time,
+                "range_end": e_time,
+            })
+        summary = L1Summary(
+            id=sid,
+            start_time=overall_start_time,
+            end_time=overall_end_time,
+            message_count=len(all_slice_msgs),
+            user_turns=user_turns,
+            topic=topic,
+            detail=f"共 {user_turns} 轮对话（归档时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}，{len(resolved_ranges)} 个区间）",
+            summary=fallback_segments,
             topic_label=topic_label or topic,
             people=people or [],
-            msg_indices=(abs_from, abs_to),
+            msg_indices=(overall_first_ts, overall_last_ts),
             source="manual",
+            time_ranges=[[s, e] for s, e, _, _ in resolved_ranges],
+            range_msg_indices=[[a_from, a_to] for _, _, a_from, a_to in resolved_ranges],
         )
 
     saved_path = save_l1(character_name, summary)
-    _append_compression_after_save(character_name, summary, source="park_topic")
-    logger.info(f"  [park] topic={summary.topic_label} | "
-                f"{summary.user_turns} turns | msg[{abs_from}:{abs_to}] | {saved_path}")
+
+    # ── compression_log：每个区间一条记录，全部指向同一个 l1_id ──
+    for idx, (_, _, a_from, a_to) in enumerate(resolved_ranges):
+        append_compression_record(
+            character_name=character_name,
+            source="archive_recent_talk",
+            l1_id=summary.id,
+            abs_from=a_from,
+            abs_to=a_to,
+            segment_index=idx,
+            segment_count=len(resolved_ranges),
+        )
+    logger.info(f"  [archive] topic={summary.topic_label} | "
+                f"{len(resolved_ranges)} ranges, {summary.user_turns} turns | {saved_path}")
     return summary
 
 
 # ═══════════════════════════════════════════════════════
-# 话题召回：recall_topic
+# 话题回想：recall_topic
 # ═══════════════════════════════════════════════════════
 
 def build_topics_context(character_name: str,
@@ -598,7 +750,7 @@ def build_topics_context(character_name: str,
     lines = []
 
     if manual_topics:
-        lines.append("## 主动归档的话题（park_topic）")
+        lines.append("## 主动归档的话题（archive_recent_talk）")
         for s in manual_topics[-max_items:]:
             label = s.topic_label or s.topic or "未命名话题"
             people_str = "，".join(s.people) if s.people else "无特定人物"
@@ -678,7 +830,7 @@ def recall_topic_by_label(character_name: str,
                 break
 
     if not matched:
-        raise ValueError(f"未找到话题「{topic_label}」的归档记录")
+        raise ValueError(f"未找到话题「{topic_label}」的归档记录,请检查标签是否正确或用 list_all 列出全部")
 
     return matched, _build_recall_block(character_name, matched)
 
@@ -696,93 +848,47 @@ def recall_topic_by_id(character_name: str,
 def _build_recall_block(character_name: str, s: L1Summary) -> str:
     """为已匹配的摘要生成续谈注入块。
 
-    格式：
-    ## 续谈话题：{label}
-    [{time_range}]
-    人物: {people}
-
-    ### 核心结论
-    {detail}
-
-    ### 关键观点
-    {key_points}
-
-    ### 原始讨论位置
-    history.json [msg_from:msg_to]
-
-    ### 原始对话内容
-    [msg:N][role]: ... (按 msg_indices 范围从 history.json 加载)
+    与 7.md 示范一致：工具 result 用 "### [timestamp] role:" + code block
+    的格式渲染原对话（与「近期对话原文」段同款），保证 LLM 看到的是
+    统一格式的对话流。
     """
-    label = s.topic_label or s.topic or "未命名话题"
-    time_range = f"{s.start_time[:19] if s.start_time else '?'} ~ {s.end_time[:19] if s.end_time else '?'}"
-    people_str = "、".join(s.people) if s.people else "无特定人物"
-
-    parts = [f"## 续谈话题：{label}", f"[{time_range}]｜人物: {people_str}", ""]
-
-    # 核心结论
-    detail = s.detail
-    if not detail and s.summary:
-        detail = s.summary[0].get("detail", "")
-    if detail:
-        parts.append("### 核心结论")
-        parts.append(detail)
-        parts.append("")
-
-    # 关键观点
-    all_points = []
-    for seg in s.summary:
-        pts = seg.get("key_points", [])
-        if pts:
-            all_points.extend(pts)
-    if all_points:
-        parts.append("### 关键观点")
-        for pt in all_points[:5]:
-            parts.append(f"- {pt}")
-        parts.append("")
-
-    # 原始位置
-    if s.msg_indices != (0, 0):
-        parts.append(f"### 原始讨论位置")
-        parts.append(
-            f"history.json 第 {s.msg_indices[0]} ~ {s.msg_indices[1]} 条消息 "
-            f"（共 {s.msg_indices[1] - s.msg_indices[0] + 1} 条）"
-        )
-    else:
-        if s.summary:
-            parts.append(f"### 原始讨论位置")
-            seg = s.summary[-1]
-            parts.append(f"[轮次 {seg.get('from', '?')} ~ {seg.get('to', '?')}]")
-
-    # ── 原始对话内容(Bug Fix: 必须把对话原文也注入,否则 agent 只能拿到摘要) ──
-    abs_from_a, abs_to_a = (None, None)
-    if s.msg_indices != (0, 0):
-        abs_from_a, abs_to_a = s.msg_indices
-    abs_from_b, abs_to_b = (None, None)
-    if s.summary:
+    # 优先用 range_msg_indices（聚合归档存了每个区间的索引）；
+    # 兼容性回退：单段归档只有 msg_indices；再回退：用 summary 最后一段的 from/to。
+    ranges_to_load: list[tuple[int, int]] = []
+    if s.range_msg_indices:
+        ranges_to_load = [(r[0], r[1]) for r in s.range_msg_indices]
+    elif s.msg_indices != (0, 0):
+        ranges_to_load = [(s.msg_indices[0], s.msg_indices[1])]
+    elif s.summary:
         seg = s.summary[-1]
-        abs_from_b = int(seg.get("from", 0) or 0)
-        abs_to_b = int(seg.get("to", 0) or 0)
+        a_from = int(seg.get("from", -1) or -1)
+        a_to = int(seg.get("to", -1) or -1)
+        if a_from >= 0 and a_to >= a_from:
+            ranges_to_load = [(a_from, a_to)]
 
-    if abs_from_a is None and abs_from_b is None:
-        return "\n".join(parts)
+    if not ranges_to_load:
+        return ""
 
-    abs_from = min(x for x in [abs_from_a, abs_from_b] if x is not None)
-    abs_to = max(x for x in [abs_to_a, abs_to_b] if x is not None)
+    # 用 experience_core 的 _render_single_message 渲染每条消息
+    # ——与「## 近期对话原文」段同款 7.md 格式：### [ts] role(name) + code block。
+    try:
+        from common.experience_core import _render_single_message
+    except ImportError:
+        return ""  # 降级：返回空字符串（让上层暴露为 tool error）
 
-    if abs_to >= abs_from:
-        original_msgs = _load_original_messages(character_name, abs_from, abs_to)
-        if original_msgs:
-            parts.append("")
-            parts.append("### 原始对话内容")
-            # 复用 _build_conversation_text 以 [msg:N][role] 格式注入,绝对索引
-            conv_text = _build_conversation_text(
-                original_msgs,
-                max_chars=8000,
-                abs_start=abs_from,
-            )
-            parts.append(conv_text)
+    rendered_sections: list[str] = []
+    for a_from, a_to in ranges_to_load:
+        original = _load_original_messages(character_name, a_from, a_to)
+        if not original:
+            continue
+        # 渲染该区间
+        section_entries: list[str] = []
+        for m in original:
+            section_entries.extend(_render_single_message(m))
+        if section_entries:
+            rendered_sections.append("\n\n".join(section_entries))
 
-    return "\n".join(parts)
+    return "\n\n".join(rendered_sections)
 
 
 def _load_original_messages(character_name: str,
@@ -864,18 +970,28 @@ def append_compression_record(character_name: str,
                               source: str,
                               l1_id: str,
                               abs_from: int,
-                              abs_to: int) -> str:
-    """追加一条压缩记录，返回压缩事件 ID。"""
+                              abs_to: int,
+                              segment_index: int = 0,
+                              segment_count: int = 1) -> str:
+    """追加一条压缩记录，返回压缩事件 ID。
+
+    segment_index / segment_count 是聚合归档的扩展字段：
+    单段归档时省略（默认 0/1），多区间归档时每个区间写一条记录。
+    """
     records = load_compression_log(character_name)
     cid = f"C-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-    records.append({
+    record = {
         "id": cid,
         "source": source,
         "l1_id": l1_id,
         "abs_from": abs_from,
         "abs_to": abs_to,
         "compressed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    })
+    }
+    if segment_count > 1:
+        record["segment_index"] = segment_index
+        record["segment_count"] = segment_count
+    records.append(record)
     _save_compression_log(character_name, records)
     return cid
 
@@ -891,7 +1007,7 @@ MAX_L1_IN_CONTEXT = 5
 def _extract_send_to_character_targets(messages: list[dict]) -> list[str]:
     """从消息列表中提取所有 send_to_character 调用的目标角色名。
 
-    用于 park_topic 的代码层兜底：people 字段应该基于工具调用的
+    用于 archive_recent_talk 的代码层兜底：people 字段应该基于工具调用的
     ground truth,而不是依赖 LLM 的自由识别。
 
     Returns:
@@ -919,16 +1035,57 @@ def _extract_send_to_character_targets(messages: list[dict]) -> list[str]:
     return targets
 
 
-def _is_msg_covered(msg_idx: int, log: list[dict]) -> bool:
-    """给定消息索引，检查它是否落在某个已被压缩的段内。"""
+def _is_msg_covered(msg_idx: int, log: list[dict], manual_only: bool = True) -> bool:
+    """给定消息索引，检查它是否落在某个已被压缩的段内。
+
+    manual_only=True（默认）时只检查 source=="archive_recent_talk" 的记录，
+    避免 auto_summarize 后台任务写入的压缩区间干扰 archive_recent_talk 的判定。
+    """
     for rec in log:
+        if manual_only and rec.get("source") != "archive_recent_talk":
+            continue
         if rec["abs_from"] <= msg_idx <= rec["abs_to"]:
             return True
     return False
 
 
-def _covered_ranges(log: list[dict]) -> list[tuple[int, int]]:
-    """返回所有已压缩段的范围列表（按 abs_from 排序，合并重叠/相邻）。"""
+def _build_topic_label_regex(label: str) -> "re.Pattern[str]":
+    """把 LLM 传的话题标签转为正则。
+
+    避免「话题1」误匹配「话题12」。lookahead 拒绝后一个字符是数字。
+    前缀不做限制——让"我们讨论话题1"也能匹配（语义上是话题1的对话）。
+    """
+    import re as _re
+    escaped = _re.escape(label)
+    return _re.compile(rf"{escaped}(?!\d)")
+
+
+# 归档指令前缀：含这些前缀的 user 消息是工具调用上下文，不应作为归档目标
+_ARCHIVE_TRIGGER_PREFIXES = (
+    "归档", "总结", "转摘要", "压缩", "先放一放", "收尾",
+    "聊完了", "话题结束", "这个话题结束", "把刚才的",
+)
+
+
+def _is_archive_trigger(content: str) -> bool:
+    """user 消息是否含归档触发前缀。"""
+    if not isinstance(content, str):
+        return False
+    s = content.strip()
+    return any(s.startswith(p) for p in _ARCHIVE_TRIGGER_PREFIXES)
+
+
+def _covered_ranges(log: list[dict], manual_only: bool = False) -> list[tuple[int, int]]:
+    """返回所有已压缩段的范围列表（按 abs_from 排序，合并重叠/相邻）。
+
+    manual_only=True 时只返回 source=="archive_recent_talk" 的记录——用于
+    archive_recent_talk 工具调用时，避开 auto_summarize 的覆盖段干扰（"扰乱测试"）。
+
+    默认 manual_only=False：experience.md 对话原文区渲染时仍然过滤全部压缩段，
+    保留与 LLM 注入上下文一致的体验（auto L1 替代的对话也应从原文区移除）。
+    """
+    if manual_only:
+        log = [r for r in log if r.get("source") == "archive_recent_talk"]
     ranges = [(r["abs_from"], r["abs_to"]) for r in log]
     ranges.sort(key=lambda x: x[0])
     if not ranges:
@@ -943,14 +1100,21 @@ def _covered_ranges(log: list[dict]) -> list[tuple[int, int]]:
     return [tuple(r) for r in merged]
 
 
-def _gaps_between_covered(total: int, log: list[dict]) -> list[tuple[int, int]]:
+def _gaps_between_covered(total: int, log: list[dict], manual_only: bool = False) -> list[tuple[int, int]]:
     """找出所有「未被压缩覆盖」的消息索引区间。
     返回 [(start, end), ...]，用于渲染 ## 近期对话原文。
+
+    manual_only=True 时只过滤 archive_recent_talk 记录（避开 auto_summarize），
+    用于 archive_recent_talk 工具的 _handle 流程。
+    manual_only=False 时过滤全部压缩段（默认），用于 experience.md 对话原文区渲染。
     """
     if not log:
         return [(0, total - 1)]
 
-    ranges = _covered_ranges(log)
+    ranges = _covered_ranges(log, manual_only=manual_only)
+    if not ranges:
+        return [(0, total - 1)]
+
     gaps = []
 
     # 第一段 Gap：头部到第一个压缩段
@@ -1090,7 +1254,12 @@ def build_recent_history_filtered(messages: list[dict],
 def _append_compression_after_save(character_name: str,
                                    summary: L1Summary,
                                    source: str):
-    """save_l1 后统一调用：追加 compression_log。"""
+    """save_l1 后统一调用：追加 compression_log。
+
+    关键设计：archive_recent_talk（manual）和 auto_summarize 都写 compression_log，
+    但用 source 区分。_gaps_between_covered / _covered_ranges 只过滤 source=="archive_recent_talk"
+    的记录，避免 auto L1 的覆盖段"扰乱" archive 的精确归档判定。
+    """
     if summary.msg_indices == (0, 0):
         return
     append_compression_record(
