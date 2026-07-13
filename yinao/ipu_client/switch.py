@@ -1,7 +1,7 @@
 """switch — 智能基元切换逻辑。"""
 from character.config_io import load_config
 from yinao import resolve_ipu, IPU_REGISTRY, get_ipu_capabilities
-from .common_client_util import PROVIDER_CHAT
+from ._providers import PROVIDER_CHAT
 
 # 代理字典（测试可以直接 monkeypatch.setitem）
 _CHAT_FNS: dict[str, callable] = dict(PROVIDER_CHAT)
@@ -30,34 +30,32 @@ def reload_after_switch(ctx):
     sync_config_to_ipu(ctx.config, ctx.ipu_config)
 
 
-def make_switch_note(old_prov: str, old_ipu: str, new_prov: str, new_ipu: str,
+def inform_ipu_switch(old_prov: str, old_ipu: str, new_prov: str, new_ipu: str,
         old_full: str, new_full: str, reason: str = "") -> str:
-    """生成引擎切换通知 — 告知 LLM 引擎已换，身份不变。"""
+    """智能基元切换通知"""
     note = (
-        f"[引擎切换通知] "
-        f"你的运行引擎已从 **{old_full}** ({old_prov}/{old_ipu}) "
-        f"切换为 **{new_full}** ({new_prov}/{new_ipu})。"
-    )
+        f"[智能基元切换通知] "
+        f"你的运行智能基元（LLM/其他思考引擎）已从 **{old_full}** ({old_prov}/{old_ipu}) "
+        f"切换为 **{new_full}** ({new_prov}/{new_ipu})。")
     if reason:
         note += f" 切换原因: {reason}。"
     note += (
-        " 引擎是计算底座，你的身份（由上方 system prompt 定义）没有改变。"
+        " 智能基元是计算底座，你的身份（由上方 system prompt 定义）没有改变。"
         " 切换已完成，无需再次调用 update_runtime。"
-        " 历史中来自旧引擎的消息如果提到了不同的引擎身份，请忽略——"
-        " 以本消息和上方 system prompt 为准。"
-    )
+        " 历史中来自旧智能基元的消息如果提到了不同的智能基元身份，请忽略——"
+        " 以本消息和上方 system prompt 为准。")
     return note
 
 
-def _next_provider(current: str, tried: set) -> str | None:
-    """返回下一个未尝试的 provider 名称，没有则返回 None。"""
+def next_provider(current: str, tried: set) -> str | None:
+    """返回下一个未尝试的供应商名，没有则返回 None。"""
     for p in IPU_REGISTRY:
         if p not in tried: return p
     return None
 
 
-def _pick_fallback_ipu(provider: str, vision_first: bool = False) -> str:
-    """返回 provider 下第一个智能基元简称。vision_first=True 时优先选有 vision 能力的。"""
+def pick_fallback_ipu(provider: str, vision_first: bool = False) -> str:
+    """返回供应商第一个智能基元简称。vision_first=True 时优先选有视觉的。"""
     ipus = IPU_REGISTRY.get(provider, {})
     if not ipus:
         raise ValueError(f"Provider {provider} 下无智能基元")
@@ -67,8 +65,8 @@ def _pick_fallback_ipu(provider: str, vision_first: bool = False) -> str:
     return next(iter(ipus))
 
 
-def _next_vision_provider(current: str, tried: set) -> str | None:
-    """返回下一个未尝试且有 vision 智能基元的 provider。"""
+def next_vision_provider(current: str, tried: set) -> str | None:
+    """返回下一个未尝试且有视觉的智能基元供应商。"""
     for p in IPU_REGISTRY:
         if p in tried: continue
         for short_name in IPU_REGISTRY[p]:

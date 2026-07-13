@@ -5,15 +5,15 @@ import sys
 from datetime import datetime
 
 from character import get_history_path, ensure_dirs
+from character.config_io import init_config, load_config, save_config
 from character.history import History
 from common.actor_log import bootstrap_summary
 from common.logger import logger
-from character.config_io import init_config, load_config, save_config
 from data_shape import ActorConfig
 from tool.builtin import set_actor, tools
 from yinao import resolve_ipu
 from yinao.ipu_client import resolve_chat, sync_config_to_ipu
-from yinao.ipu_client.common_client_util import single_completion
+from yinao.ipu_client._client import get_ipu_reply
 
 
 def _default_system_prompt() -> str:
@@ -118,9 +118,9 @@ def bootstrap(provider: str, ipu: str, character_name: str = "default"):
 def _setup_actor_executor(ctx):
     """创建并注入 @actor_tool 旁路小模型执行器（支持跨 provider 模型路由）。"""
     from tool.actor_tool import set_actor_executor
-    from yinao.ipu_client.common_client_util import form_client
+    from yinao.ipu_client._client import form_client
     from yinao.provider_manager import provider_manager
-    from yinao.ipu_client import _next_provider, _pick_fallback_ipu
+    from yinao.ipu_client import next_provider, pick_fallback_ipu
     from data_shape import IPUProvider
 
     _provider_clients: dict[str, object] = {}
@@ -222,11 +222,11 @@ def _setup_actor_executor(ctx):
 
         tried_providers = {primary_provider} if primary_provider else set()
         for _ in range(3):
-            next_p = _next_provider("", tried_providers)
+            next_p = next_provider("", tried_providers)
             if not next_p:
                 break
             tried_providers.add(next_p)
-            fb_ipu = _pick_fallback_ipu(next_p)
+            fb_ipu = pick_fallback_ipu(next_p)
             fallback_chain.append((fb_ipu, next_p,
                                    _provider_clients[next_p],
                                    _ipu_to_id.get(fb_ipu, fb_ipu)))
@@ -234,7 +234,7 @@ def _setup_actor_executor(ctx):
         last_error = None
         for fb_ipu, fb_provider, fb_client, fb_api_ipu in fallback_chain:
             try:
-                raw_text = single_completion(fb_client, fb_api_ipu, messages,
+                raw_text = get_ipu_reply(fb_client, fb_api_ipu, messages,
                     temperature=0.0, max_icp=4096)
                 text = _extract_json(raw_text)
                 try:

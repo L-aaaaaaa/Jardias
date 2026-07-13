@@ -13,14 +13,11 @@ from common.actor_log import turn_open, model_switch as log_model_switch
 from common.context import form_full_context
 from common.logger import logger
 from common.utils import set_display_name
-
 from tool.builtin import tools, clear_pending_switch
 from yinao import resolve_ipu
-from yinao.ipu_client import resolve_chat, sync_config_to_ipu, reload_after_switch, make_switch_note, \
-    _next_provider, _pick_fallback_ipu, _next_vision_provider
-from yinao.ipu_client.ipu_context import (
-    set_round_meta, update_cumulative, build_round_context,
-)
+from yinao.ipu_client import resolve_chat, sync_config_to_ipu, reload_after_switch, inform_ipu_switch, \
+    next_provider, pick_fallback_ipu, next_vision_provider
+from yinao.ipu_client.ipu_context import (set_round_meta, update_cumulative, )
 
 
 def extract_reply(messages: list[dict]) -> str:
@@ -100,15 +97,15 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
 
         try:
             result = await ctx.chat_fn(messages, ctx.ipu_config,
-                                       character_name=ctx.character_name,
-                                       on_history_save=_on_history_save)
+                character_name=ctx.character_name,
+                on_history_save=_on_history_save)
             if result.should_switch:
                 retry += 1
                 old_prov, old_ipu = ctx.config.runtime.provider, ctx.config.runtime.ipu
                 reload_after_switch(ctx)
                 log_model_switch(old_prov, old_ipu, ctx.provider, ctx.ipu, reason="LLM requested switch")
                 if retry < 3:
-                    switch_note = make_switch_note(old_prov, old_ipu, ctx.provider, ctx.ipu,
+                    switch_note = inform_ipu_switch(old_prov, old_ipu, ctx.provider, ctx.ipu,
                         old_full=old_ipu, new_full=ctx.ipu_config.ipu,
                         reason="智能基元切换由上一轮 assistant 请求")
                     messages = result.messages
@@ -125,12 +122,12 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
             if is_exhausted_error(e):
                 record_ipu_failure(ctx.provider, e)
             need_vision = bool(image_url)
-            fallback = _next_vision_provider(ctx.provider, tried) if need_vision else _next_provider(ctx.provider,
+            fallback = next_vision_provider(ctx.provider, tried) if need_vision else next_provider(ctx.provider,
                 tried)
             if fallback:
                 old_prov, old_ipu = ctx.provider, ctx.ipu
                 tried.add(fallback)
-                fm = _pick_fallback_ipu(fallback, vision_first=need_vision)
+                fm = pick_fallback_ipu(fallback, vision_first=need_vision)
                 ctx.provider, ctx.ipu = fallback, fm
                 ctx.config.runtime.provider, ctx.config.runtime.ipu = fallback, fm
                 ctx.chat_fn = resolve_chat(fallback)
@@ -140,7 +137,7 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
                 set_active_ipu(ctx.provider, ctx.ipu)
                 log_model_switch(old_prov, old_ipu, ctx.provider, ctx.ipu,
                     reason=f"auto-fallback after {type(e).__name__}")
-                switch_note = make_switch_note(old_prov, old_ipu, ctx.provider, ctx.ipu,
+                switch_note = inform_ipu_switch(old_prov, old_ipu, ctx.provider, ctx.ipu,
                     old_full=old_ipu, new_full=ctx.ipu_config.ipu,
                     reason=f"上一个引擎发生错误 ({type(e).__name__})，自动转移到可用供应商")
                 messages = None
@@ -182,14 +179,12 @@ def _build_failure_reply(ctx, messages):
 
 async def _post_round_async(ctx, user_input, messages, round_ok=True, ts=None, round_context: str = ""):
     _post_round(ctx, user_input, messages, round_ok, ts=ts)
-    from yinao.ipu_client.common_client_util import dump_experience
+    from character.experience import dump_experience
     from yinao.ipu_client.ipu_context import last_round
     # 把本轮 usage 传给 dump_experience，累加到 _dump_meta.json（持久化）
     dump_experience(
-        ctx.character_name, None,
-        round_context=round_context or None,
-        round_usage=last_round.usage if round_ok else None,
-    )
+        ctx.character_name, None, round_context=round_context or None,
+        round_usage=last_round.usage if round_ok else None, )
     # L1 摘要移到后台任务：避免阻塞主对话循环（v4-flash LLM 摘要耗时 10s+）
     asyncio.create_task(_check_and_compress_safe(ctx.character_name, ctx.history.messages))
 
@@ -523,7 +518,7 @@ async def conversation_loop(ctx, allow_switch: bool = False):
             if image_url:
                 old_prov, old_ipu = ctx.config.runtime.provider, ctx.config.runtime.ipu
                 if auto_switch_for_vision(ctx, image_url):
-                    switch_note = make_switch_note(old_prov, old_ipu, ctx.config.runtime.provider,
+                    switch_note = inform_ipu_switch(old_prov, old_ipu, ctx.config.runtime.provider,
                         ctx.config.runtime.ipu,
                         old_full=ctx.ipu_config.ipu, new_full=ctx.ipu_config.ipu,
                         reason="auto-switch for image understanding")
