@@ -17,7 +17,6 @@ import subprocess
 import sys
 from datetime import datetime
 
-
 # Windows cmd 默认代码页 = OEM 代码页（中文系统上是 cp936/GBK），
 # Python subprocess 默认按 UTF-8 解码 stdout 会乱码。
 # 在命令前加 chcp 65001 强制 cmd 输出 UTF-8——跨地区一致的最稳方案。
@@ -39,8 +38,7 @@ _BINARY_EXT = {
     ".pdf", ".zip", ".tar", ".gz", ".bz2", ".7z", ".rar",
     ".exe", ".dll", ".so", ".dylib", ".o", ".a",
     ".woff", ".woff2", ".ttf", ".otf", ".eot",
-    ".mp3", ".mp4", ".avi", ".mov", ".mkv", ".flac", ".ogg",
-}
+    ".mp3", ".mp4", ".avi", ".mov", ".mkv", ".flac", ".ogg", }
 # .git/ 下的关键文件全是二进制
 _GIT_BINARY_NAMES = {"index", "pack", "lock", "shallow", "modules"}
 
@@ -79,18 +77,16 @@ def _sanitize_binary_line(line: str) -> str | None:
     中文等高码点字符不在白名单/黑名单里——它们都是合法文本，
     只有 NUL 和 0x00-0x1F/0x7F 这类 ASCII 控制字符才是二进制行的标志。
     """
-    if "\x00" in line:
-        return None
+    if "\x00" in line: return None
     non_text = 0
     for ch in line:
         o = ord(ch)
         # ASCII 控制字符：除 tab/lf/vt/ff/cr 外视为不可打印
         if o < 0x20 and o not in (9, 10, 11, 12, 13):
             non_text += 1
-        elif o == 0x7F:  # DEL
-            non_text += 1
-    if line and non_text / len(line) > 0.30:
-        return None
+        elif o == 0x7F:
+            non_text += 1  # DEL
+    if line and non_text / len(line) > 0.30:  return None
     return line
 
 
@@ -108,8 +104,7 @@ def execute_command(arguments: dict) -> str:
     try:
         result = subprocess.run(
             command, shell=True, capture_output=True, text=True,
-            timeout=30, encoding="utf-8", errors="replace",
-        )
+            timeout=30, encoding="utf-8", errors="replace", )
         out = []
         if result.stdout.strip(): out.append(result.stdout.strip())
         if result.stderr.strip(): out.append(f"[stderr]\n{result.stderr.strip()}")
@@ -127,20 +122,18 @@ async def read_file(path: str, line_range: str | None = None) -> str:
     try:
         resolved = _resolve_path(path)
         if not resolved.exists(): return f"[Error] file not found: {path}"
-        img_exts = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".ico", ".tiff",
-                    ".svg"}  # 图片/二进制文件不应直接读取，提示使用 vision 能力
+        # 图片/二进制文件不应直接读取，提示使用 vision 能力
+        img_exts = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".ico", ".tiff", ".svg"}
         if resolved.suffix.lower() in img_exts:
             return (
                 f"[提示] {path} 是图片文件，不要用 read_file 读取。"
                 f"如果你有 vision 能力，请直接要求用户发送图片给你看；"
-                f"如果没有 vision，请用 update_runtime 切换到 vision 智能基元。"
-            )
+                f"如果没有 vision，请用 update_runtime 切换到 vision 智能基元。")
         # 二进制文件直接拒绝读取（避免误读 .git/index 等生成乱码塞进 history）
         if not _is_text_file(resolved):
             return (
                 f"[Error] {path} 是二进制文件，无法用 read_file 读取。"
-                f"如需查看文本片段请用 search_in_content 在已知文本文件上搜索。"
-            )
+                f"如需查看文本片段请用 search_in_content 在已知文本文件上搜索。")
         content = resolved.read_text(encoding="utf-8", errors="replace")
         if line_range:
             parts = line_range.split(",")
@@ -188,11 +181,8 @@ def _format_entry(item: pathlib.Path) -> str:
 
 
 async def get_directory_tree(
-    path: str = ".",
-    depth: int = 1,
-    recursive: bool = False,
-    max_entries: int = _LIST_DIR_MAX_ENTRIES,
-) -> str:
+        path: str = ".", depth: int = 1, recursive: bool = False,
+        max_entries: int = _LIST_DIR_MAX_ENTRIES, ) -> str:
     """列出目录条目；支持按深度或递归展开。
 
     参数语义：
@@ -225,8 +215,7 @@ async def get_directory_tree(
                 head = "\n".join(items[:max_entries])
                 return (
                     f"{head}\n... and {len(items) - max_entries} more entries "
-                    f"(use depth=N or smaller path)"
-                )
+                    f"(use depth=N or smaller path)")
             return "\n".join(items)
 
         # depth > 1：tree 风格输出。
@@ -294,9 +283,8 @@ async def search_in_path(pattern: str, path: str = ".") -> str:
         return _format_error(e)
 
 
-async def search_in_content(pattern: str, path: str = ".", case_insensitive: bool = False, max_results: int = 20) -> str:
-    from tool.builtin import _format_error
-
+async def search_in_content(pattern: str, path: str = ".", case_insensitive: bool = False,
+        max_results: int = 20) -> str:
     try:
         re.compile(pattern)
     except re.error as e:

@@ -9,11 +9,11 @@
 参数描述（每个工具一份）的 schema 在 metadata.py 里注入 ToolDef.parameters[*][description]。
 """
 
-# ── 通用：文件中读取相关的工具短描述（同族共用）─────────────
+# —— 通用：文件中读取相关的工具短描述（同族共用）—————————————
 # 这些工具共享"相对路径以当前 cwd 为基准"约定。
 
 
-# ── 文件工具 ───────────────────────────────────────────────
+# —————————— 文件工具 ———————————————————
 
 READ_FILE = "读取文件内容。"
 READ_FILE_PARAMS = {
@@ -55,8 +55,7 @@ GET_FILE_METADATA_PARAMS = {
     "path": "文件或目录路径。",
 }
 
-
-# ── 自手术工具 ─────────────────────────────────────────────
+# —————————— 自手术工具 —————————————————
 
 UPDATE_RUNTIME = (
     "更新运行时参数：ipu / temperature / top_p / max_icp / thinking_mode / "
@@ -74,15 +73,14 @@ UPDATE_IDENTITY = (
 UPDATE_RUNTIME_PARAMS = {
     "ipu": (
         "智能基元**短名**（参考运行时由 metadata 注入的可用列表）。"
-        "短名变更会触发 provider 切换；切换前会自动校验目标供应商是否已熔断。"
-    ),
+        "短名变更会触发 provider 切换；切换前会自动校验目标供应商是否已熔断。"),
     "temperature": "取值区间 [0, 2]。开 thinking 时 DeepSeek 端会忽略此参数。",
     "top_p": "取值区间 [0, 1]。开 thinking 时 DeepSeek 端会忽略此参数。",
     "max_icp": "正整数，单轮最大输出 token 数。",
     "thinking_mode": "`enabled` / `disabled` / `auto` 之一。",
     "reasoning_effort": "`high` 或 `max`，仅 DeepSeek 等部分模型支持。"
-                     "**需 `thinking_enabled=true`**，否则会自动开启 thinking。"
-                     "关 thinking 时本字段自动清除。",
+                        "**需 `thinking_enabled=true`**，否则会自动开启 thinking。"
+                        "关 thinking 时本字段自动清除。",
     "thinking_enabled": "`true` / `false`。",  # description
 }
 
@@ -93,8 +91,7 @@ UPDATE_IDENTITY_PARAMS = {
     "max_iterations": "单轮推理工具调用最大次数（正整数）。",
 }
 
-
-# ── 历史/摘要工具 ─────────────────────────────────────────
+# —————————— 历史/摘要工具 —————————————
 
 SUMMARIZE_CONVERSATION = (
     "将较早的对话历史压缩为 L1 摘要，节省上下文。\n\n"
@@ -109,8 +106,7 @@ SUMMARIZE_CONVERSATION_PARAMS = {
     "topic": "摘要主题（可选，留空自动推断）。",
 }
 
-
-# ── 话题归档工具 ─────────────────────────────────────────
+# —————————— 话题归档工具 —————————————
 # 这是项目里最重要的工具之一，描述长达 ~45 行，必须分块写。
 
 ARCHIVE_RECENT_TALK = (
@@ -189,17 +185,13 @@ ARCHIVE_RECENT_TALK_PARAMS = {
 
 RECALL_TOPIC = (
     "召回已归档的话题摘要，将原始对话注入上下文继续讨论。\n\n"
-
     "**使用场景**：用户说「继续聊之前的话题」「回顾价值本质」「我们上次说的」时调用。\n\n"
-
     "**效果**：调用后原始对话内容会被注入到上下文，"
     "角色可以「续谈」而非「复述」。聚合归档的多区间也会被一次性全部召回。\n\n"
-
     "参数（至少传一个）：\n"
     "- `topic_label`: 话题标签**模糊匹配**（如「价值本质」「电影」）。\n"
     "- `topic_id`: **精确匹配**归档 ID（如 `T-20260707-143020`）。\n"
     "- `list_all`: `true` = 列出所有已归档话题（不做召回）。\n\n"
-
     "**优先级**：`topic_label` > `topic_id` > `list_all`。"
 )
 
@@ -209,8 +201,7 @@ RECALL_TOPIC_PARAMS = {
     "list_all": "true 列出所有话题。",
 }
 
-
-# ── 角色管理工具 ─────────────────────────────────────────
+# —————————— 角色管理工具 —————————————
 
 CREATE_CHARACTER = (
     "创建新角色。\n\n"
@@ -268,8 +259,7 @@ SEND_TO_CHARACTER_PARAMS = {
     "message": "消息内容（不含 send_to_character 元信息，由工具自动注入）。",
 }
 
-
-# ── 时策工具 ─────────────────────────────────────────────
+# —————————— 时策工具 —————————————————
 
 SHICE_SCHEDULE_ADD = (
     "注册定时任务。当用户要求在未来某个时间执行操作时调用。\n\n"
@@ -299,8 +289,7 @@ SHICE_SCHEDULE_CANCEL_PARAMS = {
     "job_id": "任务 ID（通过 shice_schedule_list 获取）。",
 }
 
-
-# ── 系统工具 ─────────────────────────────────────────────
+# —————————— 系统工具 —————————————————
 
 EXECUTE_COMMAND = "执行 shell 命令。结果包含 stdout 和 stderr。"
 EXECUTE_COMMAND_PARAMS = {
@@ -321,8 +310,7 @@ WEB_SEARCH_PARAMS = {
     "max_results": "最大结果数（默认 5）。",
 }
 
-
-# ── 索引表（metadata.py 用）───────────────────────────────
+# —————————— 索引表（metadata.py 用）——————————————
 
 ALL_DESCRIPTIONS = {
     "read_file": READ_FILE,

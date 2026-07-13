@@ -24,12 +24,8 @@ from .descriptions import ALL_DESCRIPTIONS, ALL_PARAM_DESCS
 
 
 def _tool(
-        name: str,
-        properties: dict[str, Any],
-        required: list[str],
-        fn: Callable | None = None,
-        description_override: str | None = None,
-) -> ToolDef:
+        name: str, properties: dict[str, Any], required: list[str],
+        fn: Callable | None = None, description_override: str | None = None, ) -> ToolDef:
     """一行声明一个 ToolDef，自动注入 description 与各参数 description。"""
     description = description_override or ALL_DESCRIPTIONS[name]
 
@@ -46,12 +42,8 @@ def _tool(
         name=name,
         description=description,
         parameters={
-            "type": "object",
-            "properties": enriched_props,
-            "required": required,
-        },
-        fn=fn,
-    )
+            "type": "object", "properties": enriched_props, "required": required, },
+        fn=fn, )
 
 
 # ── 工具表 ─────────────────────────────────────────────
@@ -63,8 +55,7 @@ def _runtime_desc() -> str:
         import yinao.ipu_resolver as mr
         model_list_explicit: list[str] = []
         for _, ms in mr.IPU_REGISTRY.items():
-            for short_name in ms.keys():
-                model_list_explicit.append(short_name)
+            for short_name in ms.keys(): model_list_explicit.append(short_name)
         return (
             "update runtime params. Any combination is supported. "
             f"ipu: short name ONLY. Available: {', '.join(model_list_explicit)}. "
@@ -95,13 +86,15 @@ def build_tool_defs() -> list[ToolDef]:
                             "line_range": {"type": "string"}}, ["path"]),
         _tool("write_file", {"path": {"type": "string"}, "content": {"type": "string"},
                              "mode": {"type": "string", "default": "w"}}, ["path", "content"]),
-        _tool("get_directory_tree", {"path": {"type": "string"},
-                                     "depth": {"type": "integer", "default": 1},
-                                     "recursive": {"type": "boolean", "default": False},
-                                     "max_entries": {"type": "integer", "default": 500}}, []),
+        _tool(
+            "get_directory_tree", {"path": {"type": "string"},
+                                   "depth": {"type": "integer", "default": 1},
+                                   "recursive": {"type": "boolean", "default": False},
+                                   "max_entries": {"type": "integer", "default": 500}}, []),
         _tool("search_in_path", {"pattern": {"type": "string"}, "path": {"type": "string"}}, ["pattern"]),
         _tool("search_in_content", {"pattern": {"type": "string"}, "path": {"type": "string"},
-                                    "case_insensitive": {"type": "boolean"}, "max_results": {"type": "integer"}}, ["pattern"]),
+                                    "case_insensitive": {"type": "boolean"}, "max_results": {"type": "integer"}},
+            ["pattern"]),
         _tool("get_file_metadata", {"path": {"type": "string"}}, ["path"]),
 
         # ── 自手术工具（动态 description） ──

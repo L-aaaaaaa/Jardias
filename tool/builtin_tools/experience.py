@@ -64,14 +64,10 @@ async def archive_recent_talk(arguments: dict) -> str:
     """
     from tool.builtin import _current_actor, _format_error
     from common.experience_core import update_experience
-
     args = _parse_archive_args(arguments)  # 纯函数
     messages = _load_messages(_current_actor)  # 只加载原始数据
     if messages is None: return "[Error] 无历史记录"
-
-    if err := _validate_purity(messages, args):  # 早返回
-        return err
-
+    if err := _validate_purity(messages, args): return err  # 早返回
     archive_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     try:
         result = await _execute_archive(_current_actor, args, messages)
@@ -79,11 +75,9 @@ async def archive_recent_talk(arguments: dict) -> str:
         return _format_archive_value_error(e)
     except Exception as e:
         return _format_error(e)
-
     visible_msgs = _compute_visible(messages, _current_actor)
     entry = _build_summary_entry(result)
     response = _build_tool_result(result)
-
     _persist_experience(  # 副作用收口
         _current_actor, entry, visible_msgs, messages,
         arguments, response, archive_ts, update_experience)
@@ -125,22 +119,19 @@ def _parse_archive_args(arguments: dict) -> ArchiveArgs:
         time_ranges=time_ranges,
         topic_hint=arguments.get("topic_hint", ""),
         topic_label=arguments.get("topic_label", ""),
-        people=people,
-    )
+        people=people, )
 
 
 def _parse_time_ranges(raw) -> list[list[str]]:
     """把 LLM 传回的 time_ranges 归一为 [[start, end], ...]。
     支持 JSON 字符串、Python list、"换行/分号 + 逗号" 三种格式。
     """
-    if not raw:
-        return []
+    if not raw: return []
     if isinstance(raw, str):
         try:
             parsed = json.loads(raw)
             if isinstance(parsed, list):
-                return [[str(x[0]), str(x[1])]
-                        for x in parsed if isinstance(x, (list, tuple)) and len(x) >= 2]
+                return [[str(x[0]), str(x[1])] for x in parsed if isinstance(x, (list, tuple)) and len(x) >= 2]
         except Exception:
             ranges: list[list[str]] = []
             for line in raw.split("\n"):
@@ -158,10 +149,8 @@ def _load_messages(character_name: str) -> list[dict] | None:
     """加载 history.json 全部消息；文件不存在返回 None。"""
     from character import get_history_path
     history_path = get_history_path(character_name)
-    if not history_path.exists():
-        return None
-    with open(history_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    if not history_path.exists(): return None
+    with open(history_path, "r", encoding="utf-8") as f: return json.load(f)
 
 
 # ── 话题纯度校验（防止 LLM 用连续区间把多个话题混在一起归档）──
@@ -189,8 +178,7 @@ def _validate_range_purity(messages: list[dict], start_ts: str, end_ts: str) -> 
         f"例如 time_ranges=[[\"{start_ts}\", \"<第 1 个话题的末条 assistant 时间>\"], "
         f"[\"<第 2 个话题的 user 时间>\", \"{end_ts}\"]], "
         f"然后归档其中**一个**话题（其余话题留待下次分别归档）。"
-        f"不要用单段模式把不同话题混在一起。"
-    )
+        f"不要用单段模式把不同话题混在一起。")
 
 
 def _validate_purity(messages: list[dict], args: ArchiveArgs) -> str | None:
@@ -228,8 +216,7 @@ def _compute_visible(messages: list[dict], character_name: str) -> list[dict]:
     log = load_compression_log(character_name)
     gaps = _gaps_between_covered(len(messages), log, manual_only=True)
     visible: list[dict] = []
-    for start, end in gaps:
-        visible.extend(messages[start:end + 1])
+    for start, end in gaps: visible.extend(messages[start:end + 1])
     return visible
 
 

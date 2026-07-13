@@ -32,9 +32,7 @@ class ToolRegistry:
             result.append({
                 "type": "function",
                 "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.parameters, }})
+                    "name": tool.name, "description": tool.description, "parameters": tool.parameters, }})
         return result
 
     def get(self, name: str) -> ToolDef | None:
@@ -155,7 +153,7 @@ def _apply_field(args: "Any", rt, field: str,
     return True
 
 
-# ── 调度层其他 API ────────────────────────────────────────────
+# ────────────────────── 调度层其他 API ────────────────────────
 
 _pending_switch: str | None = None
 """非空时表示下轮需切换到指定角色。由 conversation_loop 消费。"""
@@ -188,7 +186,6 @@ def _find_missing_param(type_error: TypeError, schema: dict) -> str | None:
 
 def _load_builtin_handlers() -> dict[str, callable]:
     """从 tool.builtin_tools 各分类模块加载 HANDLERS 字典。
-
     延迟 import：避免 builtin.py 模块体执行时就触发对自身的循环引用。
     """
     from tool.builtin_tools import (config, experience, characters, shice, files, web, )
@@ -201,7 +198,5 @@ def _load_builtin_handlers() -> dict[str, callable]:
 # —————————执行———————————
 
 tools = ToolRegistry()
-# ── 填充调度表（必须在所有 handler 定义之后）──
-_BUILTIN_HANDLERS.update(_load_builtin_handlers())
-
+_BUILTIN_HANDLERS.update(_load_builtin_handlers())  # ── 填充调度表（必须在所有 handler 定义之后）──
 tools.register_file_tools()
