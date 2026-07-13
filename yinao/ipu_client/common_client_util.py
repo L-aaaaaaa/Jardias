@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
-import os
 import re
+import re as _re
 import time
+from dataclasses import dataclass, field
 
 from openai import OpenAI
 
-from character import get_character_dir
 from common.actor_log import round_start, round_end, max_rounds_reached, format_api_ok, format_round_usage
 from common.logger import logger
 from common.utils import separate_print, stream_print, set_display_name, get_silent, set_stream_color
@@ -21,30 +21,21 @@ from .ipu_context import set_round_meta, pop_switch
 
 
 def form_client(provider: IPUProvider | None = None):
-    if provider is None:
-        provider = IPUProvider()
+    if provider is None: provider = IPUProvider()
     return OpenAI(api_key=provider.api_key, base_url=provider.base_url)
 
 
 def single_completion(
-        client: OpenAI,
-        ipu: str,
-        messages: list[dict],
-        temperature: float = 0.0,
-        max_icp: int = 512,
-) -> str:
+        client: OpenAI, ipu: str, messages: list[dict], temperature: float = 0.0,
+        max_icp: int = 512, ) -> str:
     """非流式单次 API 调用，返回纯文本（@actor_tool 用）。
 
     API 协议层仍使用 max_completion_tokens / model，IPU 抽象层用 max_icp / ipu。
     """
     response = client.chat.completions.create(
-        messages=messages,
-        model=ipu,
-        temperature=temperature,
-        max_completion_tokens=max_icp,
-    )
-    if not response.choices:
-        return ""
+        messages=messages, model=ipu, temperature=temperature,
+        max_completion_tokens=max_icp, )
+    if not response.choices: return ""
     return response.choices[0].message.content or ""
 
 
@@ -54,18 +45,15 @@ def form_stream(full_context_list: list, client=None, ipu_config=None):
     API 协议层使用 OpenAI 兼容字段（model / max_completion_tokens），
     IPUConfig 字段（ipu / max_icp）在调用层映射。
     """
-    if ipu_config is None:
-        ipu_config = IPUConfig()
-    if client is None:
-        client = OpenAI(api_key=ipu_config.api_key, base_url=ipu_config.base_url)
+    if ipu_config is None: ipu_config = IPUConfig()
+    if client is None: client = OpenAI(api_key=ipu_config.api_key, base_url=ipu_config.base_url)
 
     return client.chat.completions.create(
         messages=[{k: v for k, v in m.items() if k != "_reasoning"} for m in full_context_list],
         model=ipu_config.ipu,
         extra_body=ipu_config.extra_body,
         stream=ipu_config.stream,
-        # 流式响应必须显式 include_usage，OpenAI 默认不返回 usage
-        stream_options={"include_usage": True},
+        stream_options={"include_usage": True},  # 流式响应必须显式 include_usage，OpenAI 默认不返回 usage
         temperature=ipu_config.temperature,
         top_p=ipu_config.top_p,
         max_completion_tokens=ipu_config.max_icp,
@@ -85,7 +73,8 @@ def form_stream(full_context_list: list, client=None, ipu_config=None):
 # ── 流式响应收集 ──
 
 
-def collect_round(stream, reasoning_field: str = "reasoning_details", is_tool_round: bool = False) -> RoundOutput:
+def collect_round(stream, reasoning_field: str = "reasoning_details",
+        is_tool_round: bool = False) -> RoundOutput:
     """
     消费流式响应，边接收边流式输出，同时返回结构化结果。
     reasoning_field: "reasoning_details" (MiniMax) | "reasoning_content" (DeepSeek/DashScope)
@@ -130,8 +119,7 @@ def collect_round(stream, reasoning_field: str = "reasoning_details", is_tool_ro
             if hasattr(chunk, "usage") and chunk.usage:
                 usage = chunk.usage.model_dump() if hasattr(chunk.usage, "model_dump") else None
             continue
-        if not chunk.choices:
-            continue
+        if not chunk.choices: continue
 
         delta = chunk.choices[0].delta
         deltas.append(delta)
@@ -147,15 +135,13 @@ def collect_round(stream, reasoning_field: str = "reasoning_details", is_tool_ro
                 if _primary_source == "reasoning_content":
                     # DeepSeek reasoning_content：可能是累积式也可能是非累积式
                     if rc.startswith(_rc_last):
-                        # 累积式：只打印增量
-                        new_text = rc[len(_rc_last):]
+                        new_text = rc[len(_rc_last):]  # 累积式：只打印增量
                         _rc_last = rc
                         if new_text:
                             reasoning_parts.append(new_text)
                             stream_print(new_text)
                     else:
-                        # 非累积式：每个 delta 仅含新分块 → 手动累积 _rc_last
-                        reasoning_parts.append(rc)
+                        reasoning_parts.append(rc)  # 非累积式：每个 delta 仅含新分块 → 手动累积 _rc_last
                         stream_print(rc)
                         _rc_last += rc
         elif hasattr(delta, reasoning_field) and getattr(delta, reasoning_field):
@@ -348,9 +334,6 @@ def collect_round(stream, reasoning_field: str = "reasoning_details", is_tool_ro
     return RoundOutput(reasoning, content, calls, deltas, finish_reason=finish_reason, usage=usage)
 
 
-import re as _re
-
-
 def _has_dedicated_reasoning(deltas: list) -> bool:
     """检查 deltas 中是否有专用推理字段（reasoning_content 或 reasoning_details）产生过内容。"""
     for delta in deltas:
@@ -426,7 +409,7 @@ async def execute_tool(name: str, arguments: dict) -> str:
 
 
 # ————————————————————————————————————————————————————————
-#  纯流式（无 Reason-Action）
+#  纯流式（无 Reason-Act）
 # ————————————————————————————————————————————————————————
 
 
@@ -496,22 +479,16 @@ def stream_chat(full_context_list: list[dict[str, str]], ipu_config=None):
 
 
 # ————————————————————————————————————————————————————————
-#  公共 Reason-Action 循环（Item 1 + 2: 返回值 + 提取公共循环）
+#  公共 Reason-Act 循环（Item 1 + 2: 返回值 + 提取公共循环）
 # ————————————————————————————————————————————————————————
 
 MAX_ITER = 999
 
 
 async def _run_common_round(
-        messages: list[dict],
-        iteration: int,
-        ipu_config,
-        reasoning_field: str = "reasoning_details",
-        reasoning_inline: bool = False,
-        character_name: str = "",
-        is_tool_round: bool = False,
-        on_history_save: callable | None = None,
-):
+        messages: list[dict], iteration: int, ipu_config, reasoning_field: str = "reasoning_details",
+        reasoning_inline: bool = False, character_name: str = "", is_tool_round: bool = False,
+        on_history_save: callable | None = None, ):
     """公共单轮执行：流式请求 + 响应收集 + assistant 消息组装。
 
     reasoning_field: "reasoning_details" (MiniMax) | "reasoning_content" (DeepSeek/DashScope)
@@ -532,12 +509,10 @@ async def _run_common_round(
     t0 = time.time()
     output = collect_round(stream, reasoning_field=reasoning_field, is_tool_round=is_tool_round)
     print()  # 流式输出收尾换行
-    if output.content.strip():
-        separate_print(end=True)
+    if output.content.strip(): separate_print(end=True)
     # 用户视角：本轮消耗（紧贴虚线）
     line = format_round_usage(output.usage)
-    if line:
-        print(line)
+    if line: print(line)
     elapsed = time.time() - t0
     logger.info(f"    {format_api_ok(elapsed, output.usage, output.finish_reason)}")
     set_round_meta(elapsed, output.usage, output.finish_reason)
@@ -546,8 +521,7 @@ async def _run_common_round(
     if reasoning_inline:
         # DeepSeek: reasoning_content 嵌入同一条消息
         msg: dict = {"role": "assistant", "content": output.content}
-        if output.reasoning:
-            msg["reasoning_content"] = output.reasoning
+        if output.reasoning: msg["reasoning_content"] = output.reasoning
     else:
         # MiniMax / DashScope: reasoning 作为独立 assistant 消息
         if output.reasoning:
@@ -560,44 +534,30 @@ async def _run_common_round(
              "function": {"name": tc.name, "arguments": tc.arguments}}
             for i, tc in enumerate(output.tool_calls)
         ]
-
     messages.append(msg)
-
-    # 触发 history 保存回调（实时更新 history.json）
-    if on_history_save:
-        on_history_save()
-
+    if on_history_save: on_history_save()  # 触发 history 保存回调（实时更新 history.json）
     return output, messages
 
 
-async def reason_action_loop(
-        messages: list[dict],
-        ipu_config,
-        reasoning_field: str = "reasoning_details",
-        reasoning_inline: bool = False,
-        character_name: str = "",
-        on_history_save: callable | None = None,
-) -> ChatResult:
-    """公共 Reason-Action 循环：多轮工具调用，直到模型给出最终回复。
+async def reason_act_loop(
+        messages: list[dict], ipu_config, reasoning_field: str = "reasoning_details",
+        reasoning_inline: bool = False, character_name: str = "",
+        on_history_save: callable | None = None, ) -> ChatResult:
+    """公共 Reason-Act 循环：多轮工具调用，直到模型给出最终回复。
 
     返回 ChatResult — 用 should_switch 替代 IPUSwitched 异常。
     character_name 非空时，每轮 API 调用前写入 experience.md。
     每次工具执行后也会写入 experience.md 并触发 on_history_save。
     on_history_save: 每次 API 调用后触发 history 保存回调（用于实时更新 history.json）
     """
-    if character_name:
-        set_display_name(character_name)
+    if character_name: set_display_name(character_name)
     last_content = ""
 
     for i in range(MAX_ITER):
         output, messages = await _run_common_round(
-            messages, i, ipu_config,
-            reasoning_field=reasoning_field,
-            reasoning_inline=reasoning_inline,
-            character_name=character_name,
-            is_tool_round=(i > 0),
-            on_history_save=on_history_save,
-        )
+            messages, i, ipu_config, reasoning_field=reasoning_field,
+            reasoning_inline=reasoning_inline, character_name=character_name,
+            is_tool_round=(i > 0), on_history_save=on_history_save, )
         last_content = output.content
 
         if output.tool_calls:
@@ -648,15 +608,11 @@ async def reason_action_loop(
                     else:
                         print(f"\n  [OK] {tc.name}:\n{result[:300]}{'...' if len(result) > 300 else ''}")
                 messages.append({
-                    "role": "tool",
-                    "tool_call_id": f"call_{i}_{idx}",
-                    "name": tc.name,
-                    "content": result,
-                })
+                    "role": "tool", "tool_call_id": f"call_{i}_{idx}",
+                    "name": tc.name, "content": result, })
 
                 # 每次工具执行后：触发 history 保存回调
-                if on_history_save:
-                    on_history_save()
+                if on_history_save: on_history_save()
 
                 # send_to_character 后注入独立提示：防止 LLM 在文本回复中直接跟角色对话
                 if tc.name == "send_to_character":
@@ -667,19 +623,14 @@ async def reason_action_loop(
                             "对方角色的回复在上方 tool result 中。"
                             "⚠️ 对方无法看到你的普通回复文本。"
                             "如需继续对话 → 调用 send_to_character。"
-                            "如需向用户汇报 → 直接输出回复。"
-                        ),
-                    })
+                            "如需向用户汇报 → 直接输出回复。"), })
 
             # Item 1: 检查模型切换请求（替代 IPUSwitched 异常）
             switch = pop_switch()
             if switch:
                 return ChatResult(
-                    messages=messages,
-                    should_switch=True,
-                    switch_provider=switch.provider,
-                    switch_ipu=switch.ipu,
-                )
+                    messages=messages, should_switch=True,
+                    switch_provider=switch.provider, switch_ipu=switch.ipu, )
         else:
             round_end(i + 1, "no tool calls" if i == 0 else "tool chain done")
             # dump_experience 已移除，统一由 _post_round_async 调用
@@ -706,16 +657,13 @@ def _log_tool_calls_common(tool_calls: list):
 def _log_tool_result_common(tool_name: str, result: str):
     """日志记录工具结果。send_to_character 特殊处理：展示完整错误行。"""
     if tool_name == "send_to_character":
-        # 取前两行（标题行 + 内容/错误行），截断防过长
         lines = result.split("\n")
-        brief = "\n".join(lines[:2])
-        if len(brief) > 300:
-            brief = brief[:300] + "..."
+        brief = "\n".join(lines[:2])  # 取前两行（标题行 + 内容/错误行），截断防过长
+        if len(brief) > 300: brief = brief[:300] + "..."
         logger.info(f"    [RESULT] 工具结果 | {tool_name} →\n{brief}")
     else:
         first_line = result.split("\n")[0]
-        if len(first_line) > 120:
-            first_line = first_line[:120] + "..."
+        if len(first_line) > 120: first_line = first_line[:120] + "..."
         logger.info(f"    [RESULT] 工具结果 | {tool_name} → {first_line}")
 
 
@@ -726,8 +674,7 @@ def _choose_fence(text: str) -> str:
     max_run = 0
     for m in re.finditer(r"`+", text):
         run_len = len(m.group())
-        if run_len > max_run:
-            max_run = run_len
+        if run_len > max_run: max_run = run_len
     n = max_run + 1 if max_run >= 3 else 3
     return "`" * max(3, n)
 
@@ -760,8 +707,7 @@ def _flatten(msg: dict) -> str:
 
     if msg.get("role") == "tool":
         tc_name = msg.get("name", "")
-        if tc_name:
-            parts.insert(0, f"[tool_call: {tc_name}]")
+        if tc_name: parts.insert(0, f"[tool_call: {tc_name}]")
 
     if tool_calls := msg.get("tool_calls"):
         tc_lines = ["[tool_calls]"]
@@ -781,22 +727,17 @@ def _flatten(msg: dict) -> str:
 
 def _render_messages_as_dialogue(msgs: list[dict]) -> str:
     """将消息列表渲染为对话格式（不含 ## 标题）。
-
     用于从 messages 列表中提取历史消息，不依赖 message2 内容。
     """
-    if not msgs:
-        return ""
+    if not msgs: return ""
     lines: list[str] = []
     for m in msgs:
         role = m.get("role", "unknown")
         # 跳过 system 消息
-        if role == "system":
-            continue
+        if role == "system": continue
         # 跳过系统提示消息
         content = m.get("content", "")
-        if isinstance(content, str) and content.startswith("[系统]"):
-            continue
-
+        if isinstance(content, str) and content.startswith("[系统]"): continue
         text = _flatten(m)
         fence = _choose_fence(text)
         msg_time = m.get("time", "")
@@ -808,8 +749,7 @@ def _render_messages_as_dialogue(msgs: list[dict]) -> str:
 # ── experience.md 快照 ────────────────────────────────────────────────────────
 
 def dump_experience(character_name: str, messages: list[dict] | None = None,
-                   round_context: str | None = None,
-                   round_usage: dict | None = None):
+        round_context: str | None = None, round_usage: dict | None = None):
     """增量追加对话历史到 experience.md。
 
     始终从磁盘读取 history.json 获取最新消息列表。
@@ -817,7 +757,7 @@ def dump_experience(character_name: str, messages: list[dict] | None = None,
     round_context: 当前轮次的状态（上轮消耗/累计消耗），非空时写入 message1。
     round_usage: 当前轮次的 usage，累加到 _dump_meta.json 的累计字段（持久化）。
     """
-    import json, re
+    import json
     from common.experience_core import update_experience, load_experience, _write_experience_file
     from character import get_character_dir, get_history_path
     from character.history import History
@@ -868,12 +808,105 @@ def dump_experience(character_name: str, messages: list[dict] | None = None,
         return
 
     update_experience(character_name, "dump", {
-        "messages": new_msgs,
-        "_meta": meta,
-        "character_name": character_name,
-        "round_context": round_context,
-    })
+        "messages": new_msgs, "_meta": meta, "character_name": character_name,
+        "round_context": round_context, })
 
     # 同步 _dump_meta.json（用消息数，而非条目数）
     meta["written_len"] = len(dialogue_msgs)
     meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+
+
+# ─────────────────────────────────────────────────────────
+#  供应商工厂 — 三个供应商文件合并为一个 ProviderSpec 配置
+# ─────────────────────────────────────────────────────────
+
+
+@dataclass
+class ProviderSpec:
+    """供应商差异配置：每个供应商只需构造一个实例即可生成 reason_action_chat。"""
+    name: str = ""  # 供应商名（日志用）
+    ipu_default: str = "MiniMax-M2.7"  # ipu_config 为 None 时的默认 ipu
+    thinking_mode: str = "disable"  # "enable" | "disable" | "toggle" | "m3"
+    stream_opts: dict = field(default_factory=dict)
+    reasoning_field: str = "reasoning_details"
+    reasoning_inline: bool = False
+    extra_body_overrides: dict = field(default_factory=dict)
+
+
+def _apply_thinking(ipu_config: IPUConfig, spec: ProviderSpec):
+    """根据 ProviderSpec.thinking_mode 设置 extra_body。"""
+    if not ipu_config.extra_body:
+        ipu_config.extra_body = {}
+    if spec.thinking_mode == "enable":
+        ipu_config.extra_body["enable_thinking"] = True
+    elif spec.thinking_mode == "toggle":
+        ipu_config.extra_body["thinking"] = {
+            "type": "enabled" if getattr(ipu_config, "thinking_enabled", True) else "disabled"}
+    elif spec.thinking_mode == "m3":
+        ipu_config.extra_body["reasoning_split"] = True
+        if not getattr(ipu_config, "thinking_enabled", True):
+            ipu_config.extra_body["thinking"] = {"type": "disabled"}
+    # "disable" — 不设置任何 thinking 相关参数
+    ipu_config.extra_body.update(spec.extra_body_overrides)
+
+
+def _inject_tools(ipu_config: IPUConfig):
+    """延迟导入 tool 定义并注入 ipu_config。"""
+    from tool.builtin import tools  # 延迟导入，避免循环依赖
+    tool_defs = tools.get_definitions()
+    if tool_defs:
+        ipu_config.tools = tool_defs
+        ipu_config.tool_choice = "auto"
+
+
+def make_provider_chat(spec: ProviderSpec):
+    """生成供应商的 reason_action_chat 协程函数。"""
+
+    async def reason_action_chat(
+            messages: list[dict], ipu_config=None, character_name: str = "",
+            on_history_save: callable | None = None, ) -> ChatResult:
+        if ipu_config is None:
+            ipu_config = IPUConfig(ipu=spec.ipu_default)
+        logger.info(
+            f"供应商 {spec.name} | 智能基元={ipu_config.ipu} | 地址={ipu_config.base_url}"
+        )
+        _apply_thinking(ipu_config, spec)
+        for k, v in spec.stream_opts.items():
+            setattr(ipu_config, k, v)
+        _inject_tools(ipu_config)
+        return await reason_act_loop(
+            messages, ipu_config,
+            reasoning_field=spec.reasoning_field,
+            reasoning_inline=spec.reasoning_inline,
+            character_name=character_name,
+            on_history_save=on_history_save,
+        )
+
+    return reason_action_chat
+
+
+# ── 供应商注册表（模块加载时自动注册） ──────────────────────────
+
+PROVIDER_CHAT: dict[str, callable] = {}
+
+PROVIDER_CHAT["dashscope"] = make_provider_chat(ProviderSpec(
+    name="dashscope",
+    thinking_mode="enable",
+    stream_opts={"include_usage": True},
+    reasoning_field="reasoning_content",
+))
+
+PROVIDER_CHAT["deepseek"] = make_provider_chat(ProviderSpec(
+    name="deepseek",
+    ipu_default="v4-pro",
+    thinking_mode="toggle",
+    stream_opts={"stream": True},
+    reasoning_field="reasoning_content",
+    reasoning_inline=True,
+))
+
+PROVIDER_CHAT["minimax"] = make_provider_chat(ProviderSpec(
+    name="minimax",
+    thinking_mode="m3",
+    reasoning_field="reasoning_details",
+))

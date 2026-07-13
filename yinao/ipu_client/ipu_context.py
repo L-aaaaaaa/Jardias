@@ -59,15 +59,13 @@ def record_ipu_failure(provider: str, error: Exception):
         from common.logger import logger
         remaining = int(cb.reset_remaining() or 0)
         logger.warning(
-            f"[CIRCUIT] 供应商 {provider} 已熔断（{cb._failures}次失败）— {remaining}s 后自动恢复"
-        )
+            f"[CIRCUIT] 供应商 {provider} 已熔断（{cb._failures}次失败）— {remaining}s 后自动恢复")
 
 
 def is_provider_available(provider: str) -> bool:
     """检查供应商是否可用（未被熔断）。"""
     cb = _circuit_breakers.get(provider)
-    if cb is None:
-        return True
+    if cb is None: return True
     return not cb.is_open()
 
 
@@ -113,51 +111,17 @@ last_round: RoundMeta = RoundMeta()
 def set_round_meta(elapsed: float, usage: dict | None = None,
         finish_reason: str | None = None, error: str | None = None):
     global last_round
-    last_round = RoundMeta(api_time=elapsed, usage=usage,
-        finish_reason=finish_reason, error=error)
+    last_round = RoundMeta(
+        api_time=elapsed, usage=usage, finish_reason=finish_reason, error=error)
 
 
 # ── 累计用量（API 原字段仍是 prompt_tokens/completion_tokens/...；此处只做展示命名）──
 
-cumulative_usage: dict = {"prompt_icp": 0, "completion_icp": 0,
-                          "total_icp": 0, "thinking_icp": 0}
+cumulative_usage: dict = {
+    "prompt_icp": 0, "completion_icp": 0, "total_icp": 0, "thinking_icp": 0}
 provider_latency: dict[str, deque] = {}
 
 _MAX_LATENCY_SAMPLES = 5
-
-
-def _usage_to_icp(usage: dict) -> dict:
-    """把 API 返回的 tokens 字段换算成 ICP 视角键名（用于展示与累计）。"""
-    if not usage:
-        return {}
-    details = usage.get("completion_tokens_details", {}) or {}
-    return {
-        "prompt_icp": usage.get("prompt_tokens", 0),
-        "completion_icp": usage.get("completion_tokens", 0),
-        "total_icp": usage.get("total_tokens", 0),
-        "thinking_icp": details.get("reasoning_tokens", 0),
-    }
-
-
-def _load_cumulative(character_name: str) -> dict:
-    """从 _dump_meta.json 读取持久化的累计用量。"""
-    try:
-        from character import get_character_dir
-        meta_path = get_character_dir(character_name) / "_dump_meta.json"
-        if not meta_path.exists():
-            return {"prompt_icp": 0, "completion_icp": 0,
-                    "total_icp": 0, "thinking_icp": 0}
-        import json
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        return {
-            "prompt_icp": meta.get("prompt_icp", 0),
-            "completion_icp": meta.get("completion_icp", 0),
-            "total_icp": meta.get("total_icp", 0),
-            "thinking_icp": meta.get("thinking_icp", 0),
-        }
-    except Exception:
-        return {"prompt_icp": 0, "completion_icp": 0,
-                "total_icp": 0, "thinking_icp": 0}
 
 
 def update_cumulative(usage: dict | None, provider: str, elapsed: float):
@@ -185,21 +149,19 @@ def build_round_context(character_name: str | None = None) -> str:
     if last_round.usage:
         icp = _usage_to_icp(last_round.usage)
         sentence = [f"**上轮消耗**: 本轮输入 {icp.get('prompt_icp', 0)} 智点"]
-        reason_tok = icp.get("thinking_icp", 0)
-        comp_tok = icp.get("completion_icp", 0)
-        if reason_tok:
-            sentence.append(f"输出 {reason_tok} 智点的思考，{comp_tok - reason_tok} 智点的回答")
-        elif comp_tok:
-            sentence.append(f"输出 {comp_tok} 智点的回答")
+        reason_icp = icp.get("thinking_icp", 0)
+        comp_icp = icp.get("completion_icp", 0)
+        if reason_icp:
+            sentence.append(f"输出 {reason_icp} 智点的思考，{comp_icp - reason_icp} 智点的回答")
+        elif comp_icp:
+            sentence.append(f"输出 {comp_icp} 智点的回答")
         if icp.get("total_icp"):
             sentence.append(f"合计 {icp['total_icp']} 智点")
         parts.append("，".join(sentence) + "。")
 
         cu = _load_cumulative(character_name) if character_name else cumulative_usage
         if cu.get("total_icp", 0) > 0:
-            cu_sentence = [
-                f"**累计消耗**: 累计输入 {cu.get('prompt_icp', 0)} 智点"
-            ]
+            cu_sentence = [f"**累计消耗**: 累计输入 {cu.get('prompt_icp', 0)} 智点"]
             cu_reason = cu.get("thinking_icp", 0)
             cu_comp = cu.get("completion_icp", 0)
             if cu_reason:
@@ -214,12 +176,10 @@ def build_round_context(character_name: str | None = None) -> str:
         parts.append(
             "⚠️ **上轮回复被截断**（达到 max_icp 限制）。"
             "你可能需要调用 update_runtime 放宽 max_icp，"
-            "或在后续回复中更精简。"
-        )
+            "或在后续回复中更精简。")
 
     # 3. 错误通知
-    if last_round.error:
-        parts.append(f"⚠️ **上轮调用异常**: {last_round.error}")
+    if last_round.error: parts.append(f"⚠️ **上轮调用异常**: {last_round.error}")
 
     # 4. 延迟对比
     if len(provider_latency) > 1:
@@ -229,10 +189,38 @@ def build_round_context(character_name: str | None = None) -> str:
             if q:
                 avg = sum(q) / len(q)
                 lat_lines.append(f"{prov} {avg:.1f}s")
-        if lat_lines:
-            parts.append("**各供应商延迟** (最近 {n} 轮均值): " + " / ".join(lat_lines))
+        if lat_lines: parts.append("**各供应商延迟** (最近 {n} 轮均值): " + " / ".join(lat_lines))
 
     return "\n".join(parts)
+
+
+def _usage_to_icp(usage: dict) -> dict:
+    """把 API 返回的 tokens 字段换算成 ICP 视角键名（用于展示与累计）。"""
+    if not usage: return {}
+    details = usage.get("completion_tokens_details", {}) or {}
+    return {
+        "prompt_icp": usage.get("prompt_tokens", 0),
+        "completion_icp": usage.get("completion_tokens", 0),
+        "total_icp": usage.get("total_tokens", 0),
+        "thinking_icp": details.get("reasoning_tokens", 0), }
+
+
+def _load_cumulative(character_name: str) -> dict:
+    """从 _dump_meta.json 读取持久化的累计用量。"""
+    try:
+        from character import get_character_dir
+        meta_path = get_character_dir(character_name) / "_dump_meta.json"
+        if not meta_path.exists():
+            return {"prompt_icp": 0, "completion_icp": 0, "total_icp": 0, "thinking_icp": 0}
+        import json
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        return {
+            "prompt_icp": meta.get("prompt_icp", 0),
+            "completion_icp": meta.get("completion_icp", 0),
+            "total_icp": meta.get("total_icp", 0),
+            "thinking_icp": meta.get("thinking_icp", 0), }
+    except Exception:
+        return {"prompt_icp": 0, "completion_icp": 0, "total_icp": 0, "thinking_icp": 0}
 
 
 # ── 供应商工具函数 ──
@@ -240,10 +228,8 @@ def build_round_context(character_name: str | None = None) -> str:
 def resolve_ipu_provider(ipu_name: str) -> str | None:
     """根据智能基元短名反向查 provider。"""
     for provider, ipus in IPU_REGISTRY.items():
-        if ipu_name in ipus:
-            return provider
-    if ipu_name in IPU_REGISTRY:
-        return ipu_name
+        if ipu_name in ipus: return provider
+    if ipu_name in IPU_REGISTRY: return ipu_name
     return None
 
 

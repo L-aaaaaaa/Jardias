@@ -1,17 +1,14 @@
 """switch — 智能基元切换逻辑。"""
 from character.config_io import load_config
 from yinao import resolve_ipu, IPU_REGISTRY, get_ipu_capabilities
-from yinao.ipu_client import deepseek, dashscope
-from yinao.ipu_client import minimax
+from .common_client_util import PROVIDER_CHAT
 
-_CHAT_FNS = {
-    "deepseek": deepseek.reason_action_chat,
-    "dashscope": dashscope.reason_action_chat,
-}
+# 代理字典（测试可以直接 monkeypatch.setitem）
+_CHAT_FNS: dict[str, callable] = dict(PROVIDER_CHAT)
 
 
 def resolve_chat(provider: str):
-    return _CHAT_FNS.get(provider, minimax.reason_action_chat)
+    return _CHAT_FNS.get(provider, PROVIDER_CHAT["minimax"])
 
 
 def sync_config_to_ipu(config, ipu_config):
@@ -55,8 +52,7 @@ def make_switch_note(old_prov: str, old_ipu: str, new_prov: str, new_ipu: str,
 def _next_provider(current: str, tried: set) -> str | None:
     """返回下一个未尝试的 provider 名称，没有则返回 None。"""
     for p in IPU_REGISTRY:
-        if p not in tried:
-            return p
+        if p not in tried: return p
     return None
 
 
@@ -67,17 +63,14 @@ def _pick_fallback_ipu(provider: str, vision_first: bool = False) -> str:
         raise ValueError(f"Provider {provider} 下无智能基元")
     if vision_first:
         for short_name in ipus:
-            if "vision" in get_ipu_capabilities(provider, short_name):
-                return short_name
+            if "vision" in get_ipu_capabilities(provider, short_name): return short_name
     return next(iter(ipus))
 
 
 def _next_vision_provider(current: str, tried: set) -> str | None:
     """返回下一个未尝试且有 vision 智能基元的 provider。"""
     for p in IPU_REGISTRY:
-        if p in tried:
-            continue
+        if p in tried: continue
         for short_name in IPU_REGISTRY[p]:
-            if "vision" in get_ipu_capabilities(p, short_name):
-                return p
+            if "vision" in get_ipu_capabilities(p, short_name): return p
     return None

@@ -9,8 +9,8 @@
 """
 
 from __future__ import annotations
-import json
-from typing import Any, Callable
+
+from typing import Callable
 
 _registry: dict[str, dict] = {}
 _executor: Callable | None = None
@@ -22,12 +22,7 @@ def set_actor_executor(fn: Callable):
     _executor = fn
 
 
-def actor_tool(
-    *,
-    ipu: str,
-    output_schema: dict[str, str],
-    system: str,
-):
+def actor_tool(*, ipu: str, output_schema: dict[str, str], system: str, ):
     """装饰器：将函数标记为旁路智能基元调用工具。
 
     调用时 → 组 system + user prompt → 单次 API → JSON 解析 → 返回 dict。
@@ -41,28 +36,22 @@ def actor_tool(
         def summarize(messages: str) -> dict:
             pass  # 函数体不执行，由装饰器替换
     """
+
     def decorator(fn: Callable):
         name = fn.__name__
         _registry[name] = {
-            "ipu": ipu,
-            "output_schema": output_schema,
-            "system": system,
-            "fn": fn,
-        }
+            "ipu": ipu, "output_schema": output_schema, "system": system, "fn": fn, }
 
         async def wrapper(**kwargs) -> dict:
             if not _executor:
                 raise RuntimeError(
                     f"@actor_tool '{name}' called before executor is set. "
-                    "Call set_actor_executor() at startup."
-                )
+                    "Call set_actor_executor() at startup.")
             user_text = "\n".join(f"{k}:\n{v}" for k, v in kwargs.items())
             return await _executor(
-                ipu=ipu,
-                system_prompt=system,
-                user_message=user_text,
-                output_schema=output_schema,
-            )
+                ipu=ipu, system_prompt=system,
+                user_message=user_text, output_schema=output_schema, )
+
         wrapper.__name__ = name
         wrapper.__doc__ = fn.__doc__
         return wrapper

@@ -12,8 +12,7 @@ EXHAUSTED_KEYWORDS = frozenset((
     "out of quota", "rate limit", "403",
     "insufficient_quota", "billing exhausted",
     "access to model denied", "accessdenied",
-    "token plan", "unpurchased",
-))
+    "token plan", "unpurchased",))
 
 
 class CircuitBreaker:
@@ -40,25 +39,21 @@ class CircuitBreaker:
         """记录一次失败。达到阈值时自动熔断。"""
         self._failures += 1
         self._last_error = error_msg or self._last_error
-        if self._failures >= self._threshold:
-            self._opened_at = time.time()
+        if self._failures >= self._threshold: self._opened_at = time.time()
 
     def is_open(self) -> bool:
         """当前是否已熔断（不可用）。"""
-        if self._opened_at is None:
-            return False
+        if self._opened_at is None: return False
         elapsed = time.time() - self._opened_at
         if elapsed >= self._reset_after:
-            # 过了 reset_after，自动半开（允许下一次尝试）
-            self._opened_at = None
+            self._opened_at = None  # 过了 reset_after，自动半开（允许下一次尝试）
             self._failures = 0
             return False
         return True
 
     def reset_remaining(self) -> float:
         """返回熔断剩余秒数（0 = 未熔断）。"""
-        if self._opened_at is None:
-            return 0.0
+        if self._opened_at is None: return 0.0
         remaining = self._reset_after - (time.time() - self._opened_at)
         return max(0.0, remaining)
 
@@ -67,8 +62,7 @@ class CircuitBreaker:
             "available": not self.is_open(),
             "failures": self._failures,
             "reset_remaining_sec": int(self.reset_remaining() or 0),
-            "last_error": self._last_error[:120] if self._last_error else "",
-        }
+            "last_error": self._last_error[:120] if self._last_error else "", }
 
 
 def is_exhausted_error(error: Exception) -> bool:
@@ -77,8 +71,7 @@ def is_exhausted_error(error: Exception) -> bool:
     response = getattr(error, "response", None)
     if response is not None:
         status = getattr(response, "status_code", None)
-        if status in (429, 403):
-            return True
+        if status in (429, 403): return True
     # 检查错误消息关键词
     msg = str(error).lower()
     return any(kw.lower() in msg for kw in EXHAUSTED_KEYWORDS)

@@ -56,24 +56,21 @@ def patched_llm(monkeypatch):
     """把所有 provider 的 LLM 调用替换成假函数。
 
     关键：patch ``switch._CHAT_FNS`` 字典（这是 chat_fn 的实际取值源），
-    同时 patch minimax.reason_action_chat（fallback 路径也直接引用）。
     模块属性 monkeypatch 不影响字典已存的旧引用。
     """
     from yinao.ipu_client import switch as _switch
-    from yinao.ipu_client import minimax
     monkeypatch.setitem(_switch._CHAT_FNS, "deepseek", _fake_chat)
     monkeypatch.setitem(_switch._CHAT_FNS, "dashscope", _fake_chat)
-    monkeypatch.setattr(minimax, "reason_action_chat", _fake_chat)
+    monkeypatch.setitem(_switch._CHAT_FNS, "minimax", _fake_chat)
 
 
 @pytest.fixture
 def patched_boom_llm(monkeypatch):
     """所有 provider 都抛异常的假函数。"""
     from yinao.ipu_client import switch as _switch
-    from yinao.ipu_client import minimax
     monkeypatch.setitem(_switch._CHAT_FNS, "deepseek", _fake_boom_chat)
     monkeypatch.setitem(_switch._CHAT_FNS, "dashscope", _fake_boom_chat)
-    monkeypatch.setattr(minimax, "reason_action_chat", _fake_boom_chat)
+    monkeypatch.setitem(_switch._CHAT_FNS, "minimax", _fake_boom_chat)
 
 
 # ── 创建角色 ──────────────────────────────────────────────────
