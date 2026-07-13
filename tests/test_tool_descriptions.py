@@ -83,7 +83,7 @@ class TestBuiltinRegistry:
         # 校验关键工具都注册上
         critical = {"read_file", "write_file", "update_runtime",
                     "archive_recent_talk", "send_to_character",
-                    "shice_schedule_add", "bash", "web_search"}
+                    "shice_schedule_add", "execute_command", "web_search"}
         for n in critical:
             assert n in names, f"内置工具 {n} 缺失"
 

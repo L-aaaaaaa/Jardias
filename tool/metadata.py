@@ -95,11 +95,14 @@ def build_tool_defs() -> list[ToolDef]:
                             "line_range": {"type": "string"}}, ["path"]),
         _tool("write_file", {"path": {"type": "string"}, "content": {"type": "string"},
                              "mode": {"type": "string", "default": "w"}}, ["path", "content"]),
-        _tool("list_dir", {"path": {"type": "string"}}, []),
-        _tool("glob", {"pattern": {"type": "string"}, "path": {"type": "string"}}, ["pattern"]),
-        _tool("grep", {"pattern": {"type": "string"}, "path": {"type": "string"},
-                       "case_insensitive": {"type": "boolean"}, "max_results": {"type": "integer"}}, ["pattern"]),
-        _tool("file_info", {"path": {"type": "string"}}, ["path"]),
+        _tool("get_directory_tree", {"path": {"type": "string"},
+                                     "depth": {"type": "integer", "default": 1},
+                                     "recursive": {"type": "boolean", "default": False},
+                                     "max_entries": {"type": "integer", "default": 500}}, []),
+        _tool("search_in_path", {"pattern": {"type": "string"}, "path": {"type": "string"}}, ["pattern"]),
+        _tool("search_in_content", {"pattern": {"type": "string"}, "path": {"type": "string"},
+                                    "case_insensitive": {"type": "boolean"}, "max_results": {"type": "integer"}}, ["pattern"]),
+        _tool("get_file_metadata", {"path": {"type": "string"}}, ["path"]),
 
         # ── 自手术工具（动态 description） ──
         _tool("update_runtime",
@@ -166,7 +169,7 @@ def build_tool_defs() -> list[ToolDef]:
         _tool("shice_schedule_cancel", {"job_id": {"type": "string"}}, ["job_id"]),
 
         # ── 系统工具 ──
-        _tool("bash", {"command": {"type": "string"}}, ["command"]),
+        _tool("execute_command", {"command": {"type": "string"}}, ["command"]),
         _tool("web_fetch", {"url": {"type": "string"}}, ["url"]),
         _tool("web_search", {"query": {"type": "string"},
                              "max_results": {"type": "integer"}}, ["query"]),

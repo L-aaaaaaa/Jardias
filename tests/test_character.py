@@ -120,13 +120,13 @@ class TestHistoryAppend:
 
     def test_append_tool(self, tmp_path):
         h = History(str(tmp_path / "h.json"))
-        h.append_tool(tool_call_id="x", name="bash", content="ok", ts="2026-01-01 00:00:00")
+        h.append_tool(tool_call_id="x", name="execute_command", content="ok", ts="2026-01-01 00:00:00")
         assert h.messages[0]["role"] == "tool"
-        assert h.messages[0]["name"] == "bash"
+        assert h.messages[0]["name"] == "execute_command"
 
     def test_append_assistant_with_tool_calls(self, tmp_path):
         h = History(str(tmp_path / "h.json"))
-        h.append_assistant_msg(content="", tool_calls=[{"id": "c1", "function": {"name": "bash"}}])
+        h.append_assistant_msg(content="", tool_calls=[{"id": "c1", "function": {"name": "execute_command"}}])
         assert h.messages[0]["tool_calls"][0]["id"] == "c1"
 
     def test_append_trigger(self, tmp_path):

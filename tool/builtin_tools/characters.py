@@ -108,17 +108,15 @@ async def send_to_character(arguments: dict) -> str:
     from yinao import resolve_ipu
     from yinao.ipu_client import resolve_chat, sync_config_to_ipu
     from yinao.ipu_client.ipu_context import (
-        IPU_REGISTRY as _IPU_REGISTRY_RUNTIME, list_ipu_providers,
-    )
+        IPU_REGISTRY as _IPU_REGISTRY_RUNTIME, list_ipu_providers, )
 
     recipient = arguments["recipient"]
     message = arguments["message"]
 
     # 剥离 form_full_context 的结构化外壳，防止嵌套（详见 strip_context_wrapper）
     message = strip_context_wrapper(message)
-
-    if not registry.exists(recipient):
-        return f"[Error] 角色 {recipient} 不存在。使用 list_characters 查看可用角色。"
+    hint = f"[Error] 角色 {recipient} 不存在。使用 list_characters 查看可用角色。"
+    if not registry.exists(recipient):  return hint
 
     # ── 1. 获取双方配置 ──
     recipient_config = registry.get_config(recipient)

@@ -18,8 +18,7 @@ def update_runtime(arguments: dict) -> str:
     from character.config_io import load_config, save_config
     from yinao import IPU_REGISTRY
     from yinao.ipu_client.ipu_context import (
-        get_active_ipu, is_provider_available, request_switch, resolve_ipu_provider,
-    )
+        get_active_ipu, is_provider_available, request_switch, resolve_ipu_provider, )
 
     # ── 解析参数（pydantic 自动做类型/范围/枚举校验）──
     try:
@@ -36,8 +35,7 @@ def update_runtime(arguments: dict) -> str:
     # ── ipu 切换（含熔断检查）──
     if args.has("ipu") and (args.ipu != rt.ipu or (actual_ipu and args.ipu != actual_ipu)):
         provider = resolve_ipu_provider(args.ipu)
-        if provider and not is_provider_available(provider):
-            return _format_circuit_error(provider)
+        if provider and not is_provider_available(provider): return _format_circuit_error(provider)
         ipu_changed = _apply_field(args, rt, "ipu", changes)
 
     _apply_field(args, rt, "temperature", changes)

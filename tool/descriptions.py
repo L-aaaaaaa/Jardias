@@ -3,7 +3,7 @@
 设计原则：
 - 此文件只放常量，不允许放任何动态逻辑（运行时拼接由 metadata.py 负责）。
 - 描述面向 LLM：中文 / Markdown / 包含使用场景与反例，**不要**写内部实现细节。
-- 长描述按"使用场景 / 效果 / 模式 / 反例"分段，让 LLM 容易 grep。
+- 长描述按"使用场景 / 效果 / 模式 / 反例"分段，让 LLM 容易检索。
 - 短描述写"功能一句话"，由长描述的第一段派生。
 
 参数描述（每个工具一份）的 schema 在 metadata.py 里注入 ToolDef.parameters[*][description]。
@@ -28,27 +28,30 @@ WRITE_FILE_PARAMS = {
     "mode": "`w` 为覆盖（默认），`a` 为追加。",
 }
 
-LIST_DIR = "列出目录下的文件和子目录。"
-LIST_DIR_PARAMS = {
+GET_DIRECTORY_TREE = "列出目录下的文件和子目录；支持按深度展开或完全递归。"
+GET_DIRECTORY_TREE_PARAMS = {
     "path": "目录路径，默认 `.`。",
+    "depth": "展开层数，默认 `1`（仅当前层）。`0` 或负数视为无限递归。",
+    "recursive": "是否完全递归展开所有层，默认 `false`。`depth > 1` 时此参数被忽略。",
+    "max_entries": "最多返回多少条目，默认 `500`；超出时截断并提示缩小范围。",
 }
 
-GLOB = "按 glob 模式匹配文件路径。"
-GLOB_PARAMS = {
+SEARCH_IN_PATH = "按 glob 模式匹配文件路径。"
+SEARCH_IN_PATH_PARAMS = {
     "pattern": "glob 模式，例如 `**/*.py`。",
     "path": "搜索根目录，默认 `.`。",
 }
 
-GREP = "在文件中按正则表达式搜索。"
-GREP_PARAMS = {
+SEARCH_IN_CONTENT = "在文件中按正则表达式搜索。"
+SEARCH_IN_CONTENT_PARAMS = {
     "pattern": "正则表达式字符串。",
     "path": "搜索根（文件直接搜；目录则递归），默认 `.`。",
     "case_insensitive": "是否忽略大小写，默认 `false`。",
     "max_results": "最大返回条目数，默认 20。",
 }
 
-FILE_INFO = "获取文件或目录的元信息（绝对路径、修改时间、字节数）。"
-FILE_INFO_PARAMS = {
+GET_FILE_METADATA = "获取文件或目录的元信息（绝对路径、修改时间、字节数）。"
+GET_FILE_METADATA_PARAMS = {
     "path": "文件或目录路径。",
 }
 
@@ -299,8 +302,8 @@ SHICE_SCHEDULE_CANCEL_PARAMS = {
 
 # ── 系统工具 ─────────────────────────────────────────────
 
-BASH = "执行 shell 命令。结果包含 stdout 和 stderr。"
-BASH_PARAMS = {
+EXECUTE_COMMAND = "执行 shell 命令。结果包含 stdout 和 stderr。"
+EXECUTE_COMMAND_PARAMS = {
     "command": "要执行的命令字符串。",
 }
 
@@ -324,10 +327,10 @@ WEB_SEARCH_PARAMS = {
 ALL_DESCRIPTIONS = {
     "read_file": READ_FILE,
     "write_file": WRITE_FILE,
-    "list_dir": LIST_DIR,
-    "glob": GLOB,
-    "grep": GREP,
-    "file_info": FILE_INFO,
+    "get_directory_tree": GET_DIRECTORY_TREE,
+    "search_in_path": SEARCH_IN_PATH,
+    "search_in_content": SEARCH_IN_CONTENT,
+    "get_file_metadata": GET_FILE_METADATA,
     "update_runtime": UPDATE_RUNTIME,
     "update_identity": UPDATE_IDENTITY,
     "summarize_conversation": SUMMARIZE_CONVERSATION,
@@ -339,7 +342,7 @@ ALL_DESCRIPTIONS = {
     "shice_schedule_add": SHICE_SCHEDULE_ADD,
     "shice_schedule_list": SHICE_SCHEDULE_LIST,
     "shice_schedule_cancel": SHICE_SCHEDULE_CANCEL,
-    "bash": BASH,
+    "execute_command": EXECUTE_COMMAND,
     "web_fetch": WEB_FETCH,
     "web_search": WEB_SEARCH,
 }
@@ -347,10 +350,10 @@ ALL_DESCRIPTIONS = {
 ALL_PARAM_DESCS = {
     "read_file": READ_FILE_PARAMS,
     "write_file": WRITE_FILE_PARAMS,
-    "list_dir": LIST_DIR_PARAMS,
-    "glob": GLOB_PARAMS,
-    "grep": GREP_PARAMS,
-    "file_info": FILE_INFO_PARAMS,
+    "get_directory_tree": GET_DIRECTORY_TREE_PARAMS,
+    "search_in_path": SEARCH_IN_PATH_PARAMS,
+    "search_in_content": SEARCH_IN_CONTENT_PARAMS,
+    "get_file_metadata": GET_FILE_METADATA_PARAMS,
     "update_runtime": UPDATE_RUNTIME_PARAMS,
     "update_identity": UPDATE_IDENTITY_PARAMS,
     "summarize_conversation": SUMMARIZE_CONVERSATION_PARAMS,
@@ -360,7 +363,7 @@ ALL_PARAM_DESCS = {
     "send_to_character": SEND_TO_CHARACTER_PARAMS,
     "shice_schedule_add": SHICE_SCHEDULE_ADD_PARAMS,
     "shice_schedule_cancel": SHICE_SCHEDULE_CANCEL_PARAMS,
-    "bash": BASH_PARAMS,
+    "execute_command": EXECUTE_COMMAND_PARAMS,
     "web_fetch": WEB_FETCH_PARAMS,
     "web_search": WEB_SEARCH_PARAMS,
 }

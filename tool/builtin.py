@@ -2,7 +2,6 @@
 
 import inspect
 import re
-from typing import Any
 
 from data_shape import ToolDef
 
@@ -183,8 +182,7 @@ def set_scheduler(scheduler):
 def _find_missing_param(type_error: TypeError, schema: dict) -> str | None:
     msg = str(type_error)
     m = re.search(r"missing 1 required positional argument: '(\w+)'", msg)
-    if m:
-        return m.group(1)
+    if m: return m.group(1)
     return None
 
 
@@ -193,11 +191,9 @@ def _load_builtin_handlers() -> dict[str, callable]:
 
     延迟 import：避免 builtin.py 模块体执行时就触发对自身的循环引用。
     """
-    from tool.builtin_tools import (
-        config, context, characters, shice, files, web,
-    )
+    from tool.builtin_tools import (config, experience, characters, shice, files, web, )
     merged: dict[str, callable] = {}
-    for module in (config, context, characters, shice, files, web):
+    for module in (config, experience, characters, shice, files, web):
         merged.update(module.HANDLERS)
     return merged
 

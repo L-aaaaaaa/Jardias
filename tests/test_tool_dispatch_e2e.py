@@ -2,10 +2,11 @@
 
 覆盖范围（按 builtin._BUILTIN_HANDLERS）：
 
-    文件工具 ── read_file / write_file / list_dir / glob / grep / file_info
+    文件工具 ── read_file / write_file / get_directory_tree / search_in_path /
+              search_in_content / get_file_metadata
     配置工具 ── update_runtime / update_identity
     角色管理 ── create_character / list_characters
-    系统工具 ── bash
+    系统工具 ── execute_command
 
 不在本测试范围（明确）：
     - summarize_conversation / archive_recent_talk / recall_topic
@@ -47,7 +48,7 @@ class TestFileToolsE2E:
         (tmp_path / "sub").mkdir()
         (tmp_path / "sub" / "nested.txt").write_text("y")
 
-        r = await tools.execute("list_dir", {"path": str(tmp_path)})
+        r = await tools.execute("get_directory_tree", {"path": str(tmp_path)})
         assert "a.txt" in r and "sub/" in r
         assert "[DIR]" in r and "[FILE]" in r
 
@@ -69,32 +70,32 @@ class TestFileToolsE2E:
         assert p.read_text(encoding="utf-8") == "ab"
 
     @pytest.mark.asyncio
-    async def test_glob_filters_by_pattern(self, tmp_path: Path):
+    async def test_search_in_path_filters_by_pattern(self, tmp_path: Path):
         for n in ("a.py", "b.py", "c.txt"):
             (tmp_path / n).write_text("")
-        r = await tools.execute("glob",
+        r = await tools.execute("search_in_path",
                                 {"pattern": "*.py", "path": str(tmp_path)})
         assert "a.py" in r and "b.py" in r and "c.txt" not in r
 
     @pytest.mark.asyncio
-    async def test_grep_returns_matching_lines(self, tmp_path: Path):
+    async def test_search_in_content_returns_matching_lines(self, tmp_path: Path):
         (tmp_path / "g.txt").write_text("foo\nbar\nfoobar\n")
-        r = await tools.execute("grep",
+        r = await tools.execute("search_in_content",
                                 {"pattern": "foo", "path": str(tmp_path)})
         assert "foo" in r and "foobar" in r and "bar\n" not in r.split("\n")[1:]
 
     @pytest.mark.asyncio
-    async def test_grep_invalid_regex(self, tmp_path: Path):
-        r = await tools.execute("grep",
+    async def test_search_in_content_invalid_regex(self, tmp_path: Path):
+        r = await tools.execute("search_in_content",
                                 {"pattern": "[unclosed", "path": str(tmp_path)})
         assert r.startswith("[Error]")
         assert "invalid regex" in r
 
     @pytest.mark.asyncio
-    async def test_file_info_includes_size(self, tmp_path: Path):
+    async def test_get_file_metadata_includes_size(self, tmp_path: Path):
         p = tmp_path / "f.bin"
         p.write_bytes(b"abcde")
-        r = await tools.execute("file_info", {"path": str(p)})
+        r = await tools.execute("get_file_metadata", {"path": str(p)})
         assert "5 bytes" in r
 
 
@@ -369,34 +370,34 @@ class TestCharacterManagement:
 
 
 # ════════════════════════════════════════════════════════════
-# ── bash 系统工具 ──────────────────────────────────────────
+# ── execute_command 系统工具 ──────────────────────────────────────────
 # ════════════════════════════════════════════════════════════
 
 
-class TestBash:
-    """bash 走真实子进程；用 echo 之类轻量命令验证 stdout/stderr/exit code 处理。"""
+class TestExecuteCommand:
+    """execute_command 走真实子进程；用 echo 之类轻量命令验证 stdout/stderr/exit code 处理。"""
 
     @pytest.mark.asyncio
     async def test_simple_command_stdout(self):
-        r = await tools.execute("bash", {"command": "echo hello"})
+        r = await tools.execute("execute_command", {"command": "echo hello"})
         assert "hello" in r
 
     @pytest.mark.asyncio
     async def test_command_with_stderr(self):
-        r = await tools.execute("bash", {"command": "echo err >&2"})
+        r = await tools.execute("execute_command", {"command": "echo err >&2"})
         assert "[stderr]" in r
         assert "err" in r
 
     @pytest.mark.asyncio
     async def test_command_failure_exit_code(self):
-        r = await tools.execute("bash",
+        r = await tools.execute("execute_command",
                                 {"command": "exit 7 && echo not-reached"})
         # exit code 在返回值里
         assert "7" in r or "exit" in r.lower()
 
     @pytest.mark.asyncio
     async def test_command_empty_output(self):
-        r = await tools.execute("bash", {"command": "exit 0"})
+        r = await tools.execute("execute_command", {"command": "exit 0"})
         # exit 0 + 无 stdout/stderr 应该给出 "(exit code 0)"
         assert "exit code 0" in r
 
