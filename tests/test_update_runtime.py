@@ -1,9 +1,9 @@
-"""data_shape/update_args.py + tool/builtin._handle_update_runtime 的测试。
+"""data_shape/update_args.py + tool/builtin.update_runtime 的测试。
 
 覆盖：
 1. UpdateRuntimeArgs 强类型校验：合法值、范围越界、枚举错、未知字段、
    类型转换（str→float/int/bool）。
-2. _handle_update_runtime 行为：通过 dataclass 路径返回的 [Error]/[OK] 字符串
+2. update_runtime 行为：通过 dataclass 路径返回的 [Error]/[OK] 字符串
    与旧实现字符串格式一致。
 """
 from __future__ import annotations
@@ -15,9 +15,9 @@ import pytest
 from pydantic import ValidationError
 
 from data_shape.update_args import UpdateRuntimeArgs
+from tool.builtin_tools.config import update_runtime
 from tool.builtin import (
     _format_validation_error as _format_validation_error_from_pydantic,
-    _handle_update_runtime,
 )
 
 
@@ -137,7 +137,7 @@ class TestFormatValidationError:
         assert msg == "[Error] RuntimeError: random"
 
 
-# ── _handle_update_runtime 集成行为 ──────────────────────────────
+# ── update_runtime 集成行为 ──────────────────────────────
 
 
 @pytest.fixture
@@ -168,58 +168,58 @@ def with_alice(tmp_workdir: Path, reset_actor, reset_circuit_breakers):
 class TestHandleUpdateRuntime:
     def test_no_args_returns_no_changes(self, with_alice):
         """无字段传入 → [OK] no changes。"""
-        result = _handle_update_runtime({})
+        result = update_runtime({})
         assert result == "[OK] no changes (all values match current)"
 
     def test_temperature_out_of_range(self, with_alice):
         """temperature 超范围 → 与旧文案一致。"""
-        result = _handle_update_runtime({"temperature": 3.5})
+        result = update_runtime({"temperature": 3.5})
         assert "[Error]" in result
         assert "temperature" in result
         assert "must be in [0, 2]" in result
         assert "got 3.5" in result
 
     def test_top_p_out_of_range(self, with_alice):
-        result = _handle_update_runtime({"top_p": 1.5})
+        result = update_runtime({"top_p": 1.5})
         assert "top_p" in result
         assert "must be in [0, 1]" in result
 
     def test_max_icp_non_positive(self, with_alice):
-        result = _handle_update_runtime({"max_icp": -5})
+        result = update_runtime({"max_icp": -5})
         assert "max_icp" in result
         assert "must be positive" in result
 
     def test_invalid_enum(self, with_alice):
-        result = _handle_update_runtime({"reasoning_effort": "low"})
+        result = update_runtime({"reasoning_effort": "low"})
         assert "reasoning_effort" in result
         assert "must be high/max" in result
 
     def test_invalid_thinking_mode(self, with_alice):
-        result = _handle_update_runtime({"thinking_mode": "maybe"})
+        result = update_runtime({"thinking_mode": "maybe"})
         assert "thinking_mode" in result
         assert "must be enabled/disabled/auto" in result
 
     def test_unknown_field_rejected(self, with_alice):
         """未知字段被 model 拒绝。"""
-        result = _handle_update_runtime({"ipuxx": "M2.5"})
+        result = update_runtime({"ipuxx": "M2.5"})
         assert "ipuxx" in result
         assert "Extra inputs" in result
 
     def test_aggregation_of_multiple_errors(self, with_alice):
         """多字段错误一次性返回，LLM 一次看到全部。"""
-        result = _handle_update_runtime({"temperature": 3.5, "max_icp": -1})
+        result = update_runtime({"temperature": 3.5, "max_icp": -1})
         assert "temperature" in result
         assert "max_icp" in result
 
     def test_string_coercion_works(self, with_alice):
         """字符串 '0.7' 走 validator 转 float。"""
-        result = _handle_update_runtime({"temperature": "0.7"})
+        result = update_runtime({"temperature": "0.7"})
         assert result.startswith("[OK]")
         assert "temperature=0.7" in result
 
     def test_valid_update_returns_ok(self, with_alice):
         """合法字段传入 → [OK]，变更日志列出。"""
-        result = _handle_update_runtime({"temperature": 0.7, "max_icp": 4096})
+        result = update_runtime({"temperature": 0.7, "max_icp": 4096})
         assert result.startswith("[OK] runtime updated")
         assert "temperature=0.7" in result
         assert "max_icp=4096" in result
@@ -229,7 +229,7 @@ class TestHandleUpdateRuntime:
 
 
 class TestApplyField:
-    """_apply_field 是 _handle_update_runtime 中抽出的「无副作用赋值」helper。"""
+    """_apply_field 是 update_runtime 中抽出的「无副作用赋值」helper。"""
 
     @staticmethod
     def _fake_rt():
