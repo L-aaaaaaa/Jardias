@@ -121,7 +121,7 @@ def _format_validation_error(exc: Exception, tool_name: str) -> str:
 
 def _format_circuit_error(provider: str) -> str:
     """格式化供应商熔断错误（含所有供应商状态）。"""
-    from yinao.ipu_client.ipu_context import get_circuit_status
+    from yinao.ipu_client.circuit_breaker import get_circuit_status
 
     status = get_circuit_status().get(provider, {})
     remain = status.get("reset_remaining_sec", "?")

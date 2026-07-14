@@ -1,6 +1,5 @@
 """common/ — 通用工具层：
-- common.utils：终端输出 / 流式颜色 / 静默模式
-- common.cli_style：分隔线
+- common.cli_output：终端输出 / 流式颜色 / 静默模式 / RoundOutput 渲染
 - common.actor_log：日志格式化（不读真端）
 - common.context：上下文注入（不依赖网络的话仅测 helper）
 """
@@ -14,136 +13,136 @@ from unittest.mock import patch
 import pytest
 
 
-# ── utils.py ────────────────────────────────────────────────────
+# ── cli_output.py ────────────────────────────────────────────────────
 
 class TestSeparatePrint:
     def test_no_silent(self, reset_display, capsys):
-        from common import utils
-        utils.set_silent(False)
-        utils.separate_print("─", title="测试", length=20)
+        from common import cli_output
+        cli_output.set_silent(False)
+        cli_output.separate_print("─", title="测试", length=20)
         out = capsys.readouterr().out
         assert "测试" in out
 
     def test_silent_skips(self, reset_display, capsys):
-        from common import utils
-        utils.set_silent(True)
-        utils.separate_print("─", title="不应打印", length=20)
+        from common import cli_output
+        cli_output.set_silent(True)
+        cli_output.separate_print("─", title="不应打印", length=20)
         assert capsys.readouterr().out == ""
 
     def test_end_marker(self, reset_display, capsys):
-        from common import utils
-        utils.set_silent(False)
-        utils.separate_print(end=True, length=12)
+        from common import cli_output
+        cli_output.set_silent(False)
+        cli_output.separate_print(end=True, length=12)
         assert " -" in capsys.readouterr().out
 
     def test_empty_label(self, reset_display, capsys):
-        from common import utils
-        utils.set_silent(False)
-        utils.separate_print("─", title="", length=10)
+        from common import cli_output
+        cli_output.set_silent(False)
+        cli_output.separate_print("─", title="", length=10)
         # 仅分隔符，无标签
         out = capsys.readouterr().out
         assert "─" * 10 in out
 
     def test_display_name_prepends(self, reset_display, capsys):
-        from common import utils
-        utils.set_display_name("小明")
-        utils.set_silent(False)
-        utils.separate_print(title="回复", length=20)
+        from common import cli_output
+        cli_output.set_display_name("小明")
+        cli_output.set_silent(False)
+        cli_output.separate_print(title="回复", length=20)
         out = capsys.readouterr().out
         assert "【小明】回复" in out
 
     def test_thinking_title_adds_yellow(self, reset_display):
         """'思考' 标题应自动切到黄色流式色。"""
-        from common import utils
-        utils.set_silent(False)
-        utils.separate_print(title="思考")
-        assert utils._stream_color == "yellow"
+        from common import cli_output
+        cli_output.set_silent(False)
+        cli_output.separate_print(title="思考")
+        assert cli_output._stream_color == "yellow"
 
     def test_reply_title_resets_color(self, reset_display):
-        from common import utils
-        utils.set_stream_color("yellow")
-        utils.separate_print(title="回复")
-        assert utils._stream_color in (None, "blue")
+        from common import cli_output
+        cli_output.set_stream_color("yellow")
+        cli_output.separate_print(title="回复")
+        assert cli_output._stream_color in (None, "blue")
 
 
 class TestStreamPrint:
     def test_skip_long_blank(self, reset_display, capsys):
         """长度 > 1 的纯空白应被跳过。"""
-        from common import utils
-        utils.set_silent(False)
-        utils.stream_print("\n\n")
+        from common import cli_output
+        cli_output.set_silent(False)
+        cli_output.stream_print("\n\n")
         assert capsys.readouterr().out == ""
 
     def test_keep_single_char(self, reset_display, capsys):
-        from common import utils
-        utils.set_silent(False)
-        utils.stream_print(" ")
+        from common import cli_output
+        cli_output.set_silent(False)
+        cli_output.stream_print(" ")
         out = capsys.readouterr().out
         # 单空格被保留
         assert " " in out
 
     def test_color_branch(self, reset_display, capsys):
-        from common import utils
-        utils.set_silent(False)
-        with patch("common.utils._stream_color", "yellow"):
-            utils.stream_print("hello")
+        from common import cli_output
+        cli_output.set_silent(False)
+        with patch("common.cli_output._stream_color", "yellow"):
+            cli_output.stream_print("hello")
         out = capsys.readouterr().out
         # 应该包含 ANSI 转义
         assert "\033[" in out
 
     def test_unicode_safe_fallback(self, reset_display, capsys):
         """非 utf-8 stdout 时不应抛异常，应有降级。"""
-        from common import utils
-        utils.set_silent(False)
+        from common import cli_output
+        cli_output.set_silent(False)
 
         # 模拟 stdout 编码为 GBK，尝试打印一个 emoji
         bio = io.TextIOWrapper(io.BytesIO(), encoding="gbk", errors="replace",
                                write_through=True)
-        with patch.object(utils.sys, "stdout", bio):
+        with patch.object(cli_output.sys, "stdout", bio):
             # 这里不应该抛 UnicodeEncodeError
-            utils.stream_print("hi")
+            cli_output.stream_print("hi")
         # 关闭流
         bio.detach()
 
 
 class TestSetDisplayName:
     def test_keeps_state(self, reset_display):
-        from common import utils
-        utils.set_display_name("a")
-        assert utils._display_name == "a"
+        from common import cli_output
+        cli_output.set_display_name("a")
+        assert cli_output._display_name == "a"
 
     def test_overwrite(self, reset_display):
-        from common import utils
-        utils.set_display_name("a")
-        utils.set_display_name("b")
-        assert utils._display_name == "b"
+        from common import cli_output
+        cli_output.set_display_name("a")
+        cli_output.set_display_name("b")
+        assert cli_output._display_name == "b"
 
 
 class TestSilentMode:
     def test_default_false(self, reset_display):
-        from common import utils
-        assert utils.get_silent() is False
+        from common import cli_output
+        assert cli_output.get_silent() is False
 
     def test_set_toggle(self, reset_display):
-        from common import utils
-        utils.set_silent(True)
-        assert utils.get_silent()
-        utils.set_silent(False)
-        assert not utils.get_silent()
+        from common import cli_output
+        cli_output.set_silent(True)
+        assert cli_output.get_silent()
+        cli_output.set_silent(False)
+        assert not cli_output.get_silent()
 
 
 # ── cli_style.py ────────────────────────────────────────────────
 
 class TestSeparatorToTerminal:
     def test_default_output(self, capsys):
-        from common.cli_style import separator_to_terminal
+        from common.cli_output import separator_to_terminal
         separator_to_terminal("=", 20)
         out = capsys.readouterr().out
         # 应出现分隔符
         assert "=" in out
 
     def test_with_title(self, capsys):
-        from common.cli_style import separator_to_terminal
+        from common.cli_output import separator_to_terminal
         separator_to_terminal("─", 30, title="标题")
         out = capsys.readouterr().out
         assert "标题" in out
@@ -187,18 +186,18 @@ class TestActorLogFormat:
 
     def test_format_round_usage_silent(self):
         from common import actor_log
-        from common import utils
-        utils.set_silent(True)
+        from common import cli_output
+        cli_output.set_silent(True)
         try:
             s = actor_log.format_round_usage({"prompt_tokens": 0, "completion_tokens": 0})
             assert s == ""
         finally:
-            utils.set_silent(False)
+            cli_output.set_silent(False)
 
     def test_format_round_usage_basic(self):
         from common.actor_log import format_round_usage
-        from common import utils
-        utils.set_silent(False)
+        from common import cli_output
+        cli_output.set_silent(False)
         usage = {
             "prompt_tokens": 100,
             "completion_tokens": 50,

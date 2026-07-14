@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from data_shape.update_args import UpdateRuntimeArgs
+from data_shape.tool import UpdateRuntimeArgs
 from tool.builtin_tools.config import update_runtime
 from tool.builtin import (
     _format_validation_error as _format_validation_error_from_pydantic,

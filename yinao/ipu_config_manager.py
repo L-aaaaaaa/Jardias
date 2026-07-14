@@ -1,7 +1,7 @@
 """
-读写 providers.json + 热重载。
+读写 ipu_config.json + 热重载。
 
-旧字段名兼容：providers.json 文件中仍允许使用 "models" 键（自动转为 "ipus"）。
+旧字段名兼容：ipu_config.json 文件中仍允许使用 "models" 键（自动转为 "ipus"）。
 """
 from __future__ import annotations
 
@@ -15,10 +15,10 @@ from typing import Optional
 
 from data_shape import IPUProviderConfig, IPUConfigFile, AddIPURequest, UpdateIPURequest, RemoveIPURequest
 
-_DEFAULT_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "providers.json")
+_DEFAULT_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ipu_config.json")
 
 
-class IPURegistry:
+class IPUConfigManager:
 
     def __init__(self, config_path: str | None = None):
         self.config_path = Path(config_path or _DEFAULT_CONFIG)
@@ -181,5 +181,5 @@ class IPURegistry:
         if isinstance(v, dict): return v
         raise ValueError(f"智能基元条目必须为字符串或字典，收到 {type(v)}")
 
-provider_manager = IPURegistry()
-provider_manager.load()  # 确保文件存在并加载
+ipu_config_manager = IPUConfigManager()
+ipu_config_manager.load()  # 确保文件存在并加载

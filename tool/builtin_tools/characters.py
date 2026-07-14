@@ -12,13 +12,34 @@ from character.history import History
 from character.registry import registry
 from common.context import build_system_message, strip_context_wrapper
 from common.logger import logger
-from common.utils import set_display_name
+from common.cli_output import set_display_name
 from data_shape import ActorConfig, IPURuntime, RoleConfig
 from tool.builtin import _current_actor, set_actor
 from yinao import IPU_REGISTRY, resolve_ipu
 from yinao.ipu_client import resolve_chat, sync_config_to_ipu
-from yinao.ipu_client.ipu_context import (
+from yinao import (
     IPU_REGISTRY as _IPU_REGISTRY_RUNTIME, list_ipu_providers, )
+
+
+_SEND_TO_CHARACTER_POST_MSG = {
+    'role': 'user',
+    'content': (
+        '[系统] send_to_character 已完成。'
+        '对方角色的回复在上方 tool result 中。'
+        '对方无法看到你的普通回复文本。'
+        '如需继续对话 -> 调用 send_to_character。'
+        '如需向用户汇报 -> 直接输出回复。'
+    ),
+}
+
+
+def register_post_exec(runner) -> None:
+    """由 ``thought_weaver`` 在 bootstrap 时调用，把
+    ``send_to_character`` 的追加消息注册到通用 ToolRunner 的钩子里。"""
+    def _hook(tool_name: str, result: str, arguments: dict,
+            round_idx: int, idx: int) -> list[dict]:
+        return [_SEND_TO_CHARACTER_POST_MSG]
+    runner.register_post_exec('send_to_character', _hook)
 
 
 def create_character(arguments: dict) -> str:

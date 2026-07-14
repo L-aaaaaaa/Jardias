@@ -12,12 +12,13 @@ from character.summarizer import check_and_compress
 from common.actor_log import turn_open, model_switch as log_model_switch
 from common.context import form_full_context
 from common.logger import logger
-from common.utils import set_display_name
+from common.cli_output import set_display_name, separator_to_terminal
 from tool.builtin import tools, clear_pending_switch
 from yinao import resolve_ipu
 from yinao.ipu_client import resolve_chat, sync_config_to_ipu, reload_after_switch, inform_ipu_switch, \
     format_engine_switch_log, next_provider, pick_fallback_ipu, next_vision_provider
-from yinao.ipu_client.ipu_context import (set_round_meta, update_cumulative, )
+from yinao.ipu_client.ipu_context import set_round_meta
+from yinao.ipu_client.icp_tracker import update_cumulative
 
 
 def extract_reply(messages: list[dict]) -> str:
@@ -120,13 +121,13 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
                     if switch_note:
                         messages.append({"role": "user", "content": switch_note})
                 continue
-            from yinao.ipu_client.ipu_context import record_ipu_success
+            from yinao.ipu_client.circuit_breaker import record_ipu_success
             record_ipu_success(ctx.provider)
             return True, messages
         except Exception as e:
             logger.error(f"  [ERROR] 调用异常 | {ctx.provider}/{ctx.ipu} | {type(e).__name__}: {e}")
             from yinao.ipu_client import is_exhausted_error
-            from yinao.ipu_client.ipu_context import record_ipu_failure
+            from yinao.ipu_client.circuit_breaker import record_ipu_failure
             if is_exhausted_error(e):
                 record_ipu_failure(ctx.provider, e)
             need_vision = bool(image_url)
@@ -141,7 +142,7 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
                 ctx.chat_fn = resolve_chat(fallback)
                 _, ctx.ipu_config = resolve_ipu(fallback, fm)
                 sync_config_to_ipu(ctx.config, ctx.ipu_config)
-                from yinao.ipu_client.ipu_context import set_active_ipu
+                from yinao.ipu_client.ipu_switch import set_active_ipu
                 from character.config_io import save_config
                 from common.experience_core import sync_experience_system_block
                 set_active_ipu(ctx.provider, ctx.ipu)
@@ -235,7 +236,7 @@ async def _do_switch_character(ctx, name: str):
     ctx.chat_fn = resolve_chat(ctx.provider)
     _, ctx.ipu_config = resolve_ipu(ctx.provider, ctx.ipu)
     sync_config_to_ipu(ctx.config, ctx.ipu_config)
-    from yinao.ipu_client.ipu_context import set_active_ipu
+    from yinao.ipu_client.ipu_switch import set_active_ipu
     set_active_ipu(ctx.provider, ctx.ipu)
     ctx.history = History(str(get_history_path(name))).load()
     ctx.turn_num = int(len(ctx.history.messages) / 2) + 1
@@ -571,7 +572,7 @@ async def conversation_loop(ctx, allow_switch: bool = False):
 
 async def interactive_loop():
     from common.bootstrap import bootstrap
-    from common.cli_style import separator_to_terminal
+    from common.cli_output import separator_to_terminal
     from character.character_menu import select_or_create_character
     while True:
         result = select_or_create_character()

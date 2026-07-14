@@ -104,7 +104,7 @@ def bootstrap(provider: str, ipu: str, character_name: str = "default"):
     )
     sync_config_to_ipu(ctx.config, ctx.ipu_config)
 
-    from yinao.ipu_client.ipu_context import set_active_ipu
+    from yinao.ipu_client.ipu_switch import set_active_ipu
     set_active_ipu(provider, ipu)
 
     tool_defs = tools.get_definitions()
@@ -119,14 +119,14 @@ def _setup_actor_executor(ctx):
     """创建并注入 @actor_tool 旁路小模型执行器（支持跨 provider 模型路由）。"""
     from tool.actor_tool import set_actor_executor
     from yinao.ipu_client.reply_getter import form_client
-    from yinao.provider_manager import provider_manager
+    from yinao.ipu_config_manager import ipu_config_manager
     from yinao.ipu_client import next_provider, pick_fallback_ipu
     from data_shape import IPUProvider
 
     _provider_clients: dict[str, object] = {}
     _ipu_to_provider: dict[str, str] = {}
     _ipu_to_id: dict[str, str] = {}
-    providers_cfg = provider_manager.load()
+    providers_cfg = ipu_config_manager.load()
     for provider_cfg in providers_cfg.providers:
         pname = provider_cfg.name
         api_key = os.environ.get(provider_cfg.api_key_env, "")
@@ -256,7 +256,7 @@ def _setup_actor_executor(ctx):
             except Exception as e:
                 last_error = e
                 from yinao.ipu_client import is_exhausted_error
-                from yinao.ipu_client.ipu_context import record_ipu_failure
+                from yinao.ipu_client.circuit_breaker import record_ipu_failure
                 try:
                     if is_exhausted_error(e):
                         record_ipu_failure(fb_provider, e)

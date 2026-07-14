@@ -1,11 +1,11 @@
-﻿"""
+"""
 character_menu.py — 终端交互式角色选择/创建菜单。
 基于 Jarvis0 的 character_menu.py 适配。
 """
 from __future__ import annotations
 
 from character.registry import registry
-from common.cli_style import separator_to_terminal
+from common.cli_output import separator_to_terminal
 
 
 def print_character_menu(character_list: list[str]) -> None:
@@ -41,7 +41,7 @@ def _build_engine_menu() -> tuple[list[str], dict[int, tuple[str, str]]]:
     \u4ece IPU_REGISTRY \u52a8\u6001\u6784\u5efa\u667a\u80fd\u57fa\u5143\u9009\u62e9\u83dc\u5355\u3002
     返回 (显示行列表, {序号: (provider, model_short)})。
     """
-    from yinao.ipu_resolver import IPU_REGISTRY
+    from yinao.config_resolver import IPU_REGISTRY
     display_lines: list[str] = []
     idx_map: dict[int, tuple[str, str]] = {}
     i = 1
@@ -94,7 +94,7 @@ def select_or_create_character() -> tuple[str, str, str] | None:
             else:
                 system_prompt = "你是一个智能体角色，名字叫 #{character_name}。"
 
-            # ── 动态引擎选择（从 providers.json 自动同步）──
+            # ── 动态引擎选择（从 ipu_config.json 自动同步）──
             engine_display, engine_map = _build_engine_menu()
             print("\n选择默认引擎：")
             for i, display in enumerate(engine_display):

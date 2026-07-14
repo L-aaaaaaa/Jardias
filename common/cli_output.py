@@ -1,8 +1,24 @@
+"""cli_output — 终端输出层。
+
+集中以下职责：
+- 全局会话状态：display_name / silent / stream_color。
+- 流式分隔线：``separate_print``（长 50、auto-color、角色名前缀）和 ``separator_to_terminal``（短轻量 banner）。
+- 流式打印：``stream_print`` / ``stream_newline``，带 ANSI 颜色与 Windows GBK 兼容。
+- RoundOutput 渲染：``render_round``。
+
+设计：
+- ``separate_print`` 和 ``separator_to_terminal`` 是两种分隔线，语义不同：
+    - ``separate_print``：对话内分段（"推理过程" / "回复" / "工具调用"）。
+    - ``separator_to_terminal``：菜单 / 启动 banner / 生命周期节点。
+- silent 标志是模块级全局状态，由 ``set_silent`` / ``get_silent`` 维护，所有打印函数自行短路。
+- 不依赖 logger；用户视角的输出永远直出 stdout。
 """
-utils.py — 项目全局可复用工具
-"""
+from __future__ import annotations
+
 import sys
 from datetime import datetime as _dt
+
+from data_shape import RoundOutput
 
 # ════════════════════════════════════════════════════════════════
 
@@ -17,6 +33,8 @@ _COLORS = {"yellow": _YELLOW, "blue": _BLUE}
 
 _stream_color: str | None = None  # 全局流式颜色标记
 
+
+# ── 全局状态 ──
 
 def set_stream_color(color: str | None):
     """设置当前流式输出颜色（"yellow" / None）。推理输出自动设黄色。"""
@@ -39,6 +57,8 @@ def set_silent(v: bool):
 def get_silent() -> bool:
     return _silent
 
+
+# ── 分隔线 ──
 
 def separate_print(separator: str = "─", title: str = "", length: int = 50,
         end: bool = False) -> None:
@@ -84,6 +104,15 @@ def separate_print(separator: str = "─", title: str = "", length: int = 50,
     print(f"\n{left}{label}{right}")
 
 
+def separator_to_terminal(separator: str = "—", length: int = 20, title: str = "") -> None:
+    """轻量分隔线 — 用于菜单 / banner / 生命周期节点，不带角色名。"""
+    half = length // 2 - len(title) // 2
+    middle = f" {title} " if title else ""
+    print(f"\n{separator * half}{middle}{separator * half}")
+
+
+# ── 流式打印 ──
+
 def stream_print(content: str, end: str = "", flush: bool = True, color: str | None = None) -> None:
     """逐字流式输出到终端。跳过空白泛滥内容（避免 MiniMax thinking→content 切换时空行泛滥），但保留单空格等有意义字符。"""
     if _silent:
@@ -114,3 +143,68 @@ def stream_newline() -> None:
     if _silent:
         return
     print()
+
+
+# ── RoundOutput 渲染 ──
+
+def render_round(output: RoundOutput, *, silent: bool = False,
+        is_tool_round: bool = False) -> None:
+    """把 ``RoundOutput`` 渲染到终端。终端交互由调用方（silent）控制。
+
+    约定：
+    - ``silent=True`` 时所有 print/header 全部跳过。
+    - ``is_tool_round=True`` 时不输出"回复"标题（工具调用链中段）。
+    - 推理段显示"推理过程"分隔线，正文段显示"回复"分隔线。
+    - 只有当对应缓冲区非空时才输出分隔线，避免空段污染终端。
+    """
+    if silent:
+        return
+    if output.reasoning:
+        set_stream_color('yellow')
+        separate_print(title='推理过程')
+        stream_print(output.reasoning)
+    if output.content:
+        if not is_tool_round:
+            separate_print(title='回复')
+        stream_print(output.content)
+
+
+def emit_reasoning_header(silent: bool) -> None:
+    if not silent:
+        set_stream_color('yellow')
+        separate_print(title='推理过程')
+
+
+def emit_reasoning(silent: bool, text: str) -> None:
+    if text and not silent:
+        stream_print(text)
+
+
+def emit_content_header(silent: bool, is_tool_round: bool) -> None:
+    if not silent and not is_tool_round:
+        separate_print(title='回复')
+
+
+def emit_content(silent: bool, is_tool_round: bool, text: str) -> None:
+    if not text:
+        return
+    emit_content_header(silent, is_tool_round)
+    if not silent:
+        stream_print(text)
+
+
+# 兼容旧名字（presenter / common.utils / common.cli_style）
+present_round = render_round
+
+__all__ = [
+    # 全局状态
+    'set_stream_color', 'set_display_name', 'set_silent', 'get_silent',
+    # 分隔线
+    'separate_print', 'separator_to_terminal',
+    # 流式打印
+    'stream_print', 'stream_newline',
+    # RoundOutput 渲染
+    'render_round', 'present_round',
+    'emit_reasoning_header', 'emit_reasoning',
+    'emit_content_header', 'emit_content',
+]

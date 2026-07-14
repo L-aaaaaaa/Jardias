@@ -1,4 +1,5 @@
 # Jardias 单元测试
+解释器：D:\B\Python3.10\python.exe
 
 使用 `pytest` 运行。所有测试不依赖真实 LLM / 网络，可离线运行。
 
@@ -30,14 +31,14 @@ python -m pytest -x --tb=short
 | --- | --- |
 | `test_data_shape.py` | `data_shape/`：ActorConfig / IPURuntime / IPUConfig / L1Summary 等数据形状声明 + 序列化 |
 | `test_circuit_breaker.py` | `yinao/ipu_client/circuit_breaker.py`：状态机 + 耗尽检测 |
-| `test_common.py` | `common/utils.py`、`common/cli_style.py`、`common/actor_log.py`、`common/logger.py` |
+| `test_common.py` | `common/cli_output.py`、`common/actor_log.py`、`common/logger.py` |
 | `test_character.py` | `character/`：命名解析、History、配置 IO、registry |
 | `test_summarizer.py` | `character/summarizer.py`：区间合并 / gap 计算 / ground truth 提取 / 正则防误匹配 / L1 序列化 |
 | `test_experience_core.py` | `common/experience_core.py`：4 段结构读写 / 渲染 helpers |
 | `test_media_image.py` | `media/image.py`：URL / 路径 / data-uri 检测 |
 | `test_actor_tool.py` | `tool/actor_tool.py`：装饰器 + executor 注入 |
 | `test_schedule.py` | `schedule/`：DelayCondition、ScheduleRepository、TemporalScheduler、JobFireContext |
-| `test_ipu_resolver.py` | `yinao/provider_manager.py` + `yinao/ipu_resolver.py`：IPURegistry 加载 / 重载 / Provider CRUD |
+| `test_ipu_resolver.py` | `yinao/ipu_config_manager.py` + `yinao/config_resolver.py`：IPUConfigManager 加载 / 重载 / Provider CRUD |
 
 ## 关键边界用例
 

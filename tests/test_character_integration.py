@@ -58,7 +58,7 @@ def patched_llm(monkeypatch):
     关键：patch ``switch._CHAT_FNS`` 字典（这是 chat_fn 的实际取值源），
     模块属性 monkeypatch 不影响字典已存的旧引用。
     """
-    from yinao.ipu_client import switch as _switch
+    from yinao.ipu_client import ipu_switch as _switch
     monkeypatch.setitem(_switch._CHAT_FNS, "deepseek", _fake_chat)
     monkeypatch.setitem(_switch._CHAT_FNS, "dashscope", _fake_chat)
     monkeypatch.setitem(_switch._CHAT_FNS, "minimax", _fake_chat)
@@ -67,7 +67,7 @@ def patched_llm(monkeypatch):
 @pytest.fixture
 def patched_boom_llm(monkeypatch):
     """所有 provider 都抛异常的假函数。"""
-    from yinao.ipu_client import switch as _switch
+    from yinao.ipu_client import ipu_switch as _switch
     monkeypatch.setitem(_switch._CHAT_FNS, "deepseek", _fake_boom_chat)
     monkeypatch.setitem(_switch._CHAT_FNS, "dashscope", _fake_boom_chat)
     monkeypatch.setitem(_switch._CHAT_FNS, "minimax", _fake_boom_chat)

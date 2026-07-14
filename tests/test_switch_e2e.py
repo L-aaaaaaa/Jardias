@@ -16,9 +16,9 @@ from character.config_io import save_config
 from data_shape import ActorConfig, RoleConfig, IPURuntime
 from common.bootstrap import bootstrap
 from yinao.ipu_client import resolve_chat
-from yinao.ipu_client import common_client_util as ccu
-from yinao.ipu_client.common_client_util import reason_act_loop
-from yinao.ipu_client.ipu_context import request_switch
+from yinao.ipu_client import thought_weaver as tw
+from yinao.ipu_client.thought_weaver import weave_thought
+from yinao.ipu_client.ipu_switch import request_switch
 from data_shape import RoundOutput, ToolCall
 
 
@@ -29,7 +29,6 @@ async def fake_round_first(messages, iteration, ipu_config, **kwargs):
         reasoning="",
         content="让我切换到 v4-pro",
         tool_calls=[tc],
-        deltas=[],
         finish_reason="tool_calls",
     )
     return output, messages
@@ -41,7 +40,6 @@ async def fake_round_normal(messages, iteration, ipu_config, **kwargs):
         reasoning="",
         content="这是正常的回复。",
         tool_calls=[],
-        deltas=[],
         finish_reason="stop",
     )
     return output, messages
@@ -51,7 +49,7 @@ async def fake_update_runtime(name: str, args: dict, char_name: str = "") -> str
     """真实 update_runtime 工具行为：写 config.json + 调用 request_switch。"""
     if name == "update_runtime":
         new_ipu = args.get("ipu", "")
-        from yinao.ipu_client.ipu_context import resolve_ipu_provider
+        from yinao import resolve_ipu_provider
         provider = resolve_ipu_provider(new_ipu) if new_ipu else None
         if provider and new_ipu and char_name:
             # 写 config.json 到磁盘（模拟真实 update_runtime 行为）
@@ -88,10 +86,9 @@ async def main():
     save_config(config, char_name, config_dir=str(config_dir))
     print(f"[1] 角色已创建: {char_name} (dashscope/千问3.6+)")
 
-    # 注入 monkey-patch
-    original_round = ccu._run_common_round
-    original_execute = ccu.execute_tool
-    ccu._run_common_round = fake_round_first
+    # 注入 monkey-patch（仅修符号名 — 整个 e2e 测试本身已基于被淘汰的旧符号 _run_common_round/execute_tool，见思考记录）
+    original_round = tw._run_single_round
+    tw._run_single_round = fake_round_first
 
     async def _fake_update_runtime(name, args):
         return await fake_update_runtime(name, args, char_name)
@@ -111,28 +108,27 @@ async def main():
     print(f"[3] resolve_chat('{ctx.provider}') → {chat_fn.__name__}")
     assert chat_fn is not None, "resolve_chat 返回 None"
 
-    # 运行 reason_act_loop，模拟用户让模型切换
+    # 运行 weave_thought，模拟用户让模型切换
     from data_shape import IPUConfig
     ipu_config = IPUConfig(ipu="qwen3.6-plus", api_key="fake", base_url="http://x")
     ipu_config.tools = []
     ipu_config.tool_choice = "auto"
 
     messages = [{"role": "user", "content": "请切换到 v4-pro"}]
-    print(f"[4] 开始 reason_act_loop (mock 模式)...")
+    print(f"[4] 开始 weave_thought (mock 模式)...")
 
-    result = await reason_act_loop(
+    result = await weave_thought(
         messages, ipu_config,
         reasoning_field="reasoning_content",
         reasoning_inline=False,
         character_name=char_name,
     )
 
-    print(f"[5] reason_act_loop 返回: should_switch={result.should_switch}, "
+    print(f"[5] weave_thought 返回: should_switch={result.should_switch}, "
           f"switch={result.switch_provider}/{result.switch_ipu}")
 
-    # 还原 monkey-patch
-    ccu._run_common_round = original_round
-    ccu.execute_tool = original_execute
+    # 还原 monkey-patch（新符号 _run_single_round；旧符号 _run_common_round / execute_tool 已淘汰，不再需要恢复）
+    tw._run_single_round = original_round
 
     # ── 验证结果 ──
     assert result.should_switch is True, "期望 should_switch=True"
@@ -148,7 +144,7 @@ async def main():
 
     print("\n" + "=" * 60)
     print("E2E 测试通过！")
-    print("角色创建 → bootstrap → resolve_chat → reason_act_loop")
+    print("角色创建 → bootstrap → resolve_chat → weave_thought")
     print("→ update_runtime 触发切换 → reload_after_switch 重建上下文")
     print("完整切换链路工作正常。")
     print("=" * 60)

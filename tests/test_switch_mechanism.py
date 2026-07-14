@@ -3,7 +3,7 @@
 流程：
 1. 创建一个新角色
 2. 模拟 LLM 返回 tool_call(update_runtime 切到另一个供应商)
-3. 验证 reason_act_loop 检测到 should_switch
+3. 验证 weave_thought 检测到 should_switch
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from character.registry import registry
 from character.config_io import save_config
 from data_shape import ActorConfig, RoleConfig, IPURuntime
 from yinao.ipu_client import resolve_chat
-from yinao.ipu_client._providers import PROVIDER_SPECS
+from yinao.ipu_client.ipu_switch import PROVIDER_SPECS
 
 
 def setup_test_character(name: str = "switch-test-角色") -> tuple:
@@ -61,14 +61,14 @@ def setup_test_character(name: str = "switch-test-角色") -> tuple:
 
 
 def test_switch_detection_in_loop():
-    """测试：reason_act_loop 内部调用 _run_common_round 后正确处理 should_switch。
+    """测试：weave_thought 内部调用 _run_single_round 后正确处理 should_switch。
 
-    通过 monkey-patch _run_common_round 让它直接返回一个带有 tool_call(update_runtime)
+    通过 monkey-patch _run_single_round 让它直接返回一个带有 tool_call(update_runtime)
     的 RoundOutput，从而触发 update_runtime 工具 → 请求切换 → 验证 should_switch。
     """
-    from yinao.ipu_client.common_client_util import reason_act_loop
-    from yinao.ipu_client.ipu_context import request_switch
-    from yinao.ipu_client import common_client_util as ccu
+    from yinao.ipu_client.thought_weaver import weave_thought
+    from yinao.ipu_client.ipu_switch import request_switch
+    from yinao.ipu_client import thought_weaver as tw
     from data_shape import RoundOutput, ToolCall
 
     async def fake_round(messages, iteration, ipu_config, **kwargs):
@@ -77,37 +77,43 @@ def test_switch_detection_in_loop():
             reasoning="",
             content="切换到 v4-pro",
             tool_calls=[tc],
-            deltas=[],
             finish_reason="tool_calls",
         )
         return output, messages
 
-    original_round = ccu._run_common_round
-    ccu._run_common_round = fake_round
+    original_round = tw._run_single_round
+    tw._run_single_round = fake_round
 
     try:
-        # 同时要 mock execute_tool 让 update_runtime 真的能触发 request_switch
-        from tool.builtin import tools as t
+        # 同时要 mock 工具执行让 update_runtime 真的能触发 request_switch
+        from yinao.ipu_client.tool_runner import ToolRunner
 
-        async def fake_execute_tool(name, args):
-            # 模拟 update_runtime 工具：调用 request_switch 写入全局
-            if name == "update_runtime":
-                # 模拟切换请求：让 ipu 变为 v4-pro，触发 reason_act_loop 的 switch path
-                request_switch("deepseek", "v4-pro")
-                return "[OK] 已请求切换到 deepseek/v4-pro"
-            return "[OK]"
+        async def fake_run(self, tool_calls, messages, round_idx, on_history_save=None):
+            for tc in tool_calls:
+                if tc.name == "update_runtime":
+                    request_switch("deepseek", "v4-pro")
+                messages.append({"role": "tool",
+                    "tool_call_id": getattr(tc, "id", None) or f"call_{round_idx}_0",
+                    "name": tc.name, "content": "[OK]"})
+            return messages
 
-        original_execute = ccu.execute_tool
-        ccu.execute_tool = fake_execute_tool
+        class StubExecutor:
+            async def execute(self, name, args):
+                return "[OK]"
+
+        fake_tool_runner = ToolRunner(executor=StubExecutor())
+        fake_tool_runner.run = lambda tool_calls, messages, round_idx, on_history_save=None: fake_run(
+            fake_tool_runner, tool_calls, messages, round_idx, on_history_save)
 
         messages = [{"role": "user", "content": "切到 v4-pro。"}]
         from data_shape import IPUConfig
         ipu_config = IPUConfig(ipu="test", api_key="fake", base_url="http://x")
 
-        result = asyncio.run(reason_act_loop(
+        result = asyncio.run(weave_thought(
             messages, ipu_config,
             reasoning_field="reasoning_content",
             reasoning_inline=True,
+            tool_runner=fake_tool_runner,
         ))
 
         assert result.should_switch is True, f"期望 should_switch=True, 实得 {result.should_switch}"
@@ -115,8 +121,7 @@ def test_switch_detection_in_loop():
         assert result.switch_ipu == "v4-pro", f"期望 ipu=v4-pro, 实得 {result.switch_ipu}"
         print(f"  [PASS] 切换检测: should_switch=True, {result.switch_provider}/{result.switch_ipu}")
     finally:
-        ccu._run_common_round = original_round
-        ccu.execute_tool = original_execute
+        tw._run_single_round = original_round
         try:
             ctx_mod.switch_request = None
         except NameError:
@@ -146,7 +151,7 @@ def test_request_switch_round_trip():
     """测试：request_switch → pop_switch 往返。"""
     switch_request = None  # 重置
 
-    from yinao.ipu_client.ipu_context import request_switch, pop_switch
+    from yinao.ipu_client.ipu_switch import request_switch, pop_switch
     from data_shape import IPUSwitch
 
     # 确保全局状态干净

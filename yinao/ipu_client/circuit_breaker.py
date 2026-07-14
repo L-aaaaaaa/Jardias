@@ -1,9 +1,17 @@
 """
-熔断器 — 供应商故障自动熔断，防止反复回切。
+circuit_breaker.py — 熔断器：单实例 + 跨 provider 共享字典。
+
+- ``CircuitBreaker``：单 provider 的状态机（连续失败 → 熔断 → reset_after 秒后自愈）。
+- ``is_exhausted_error``：判断错误是否属于耗尽/欠费类（这类错才触发熔断）。
+- 模块级 ``_circuit_breakers``：跨 ipu 共享（同一 provider 的所有 ipu 共享一个熔断器）。
+- ``record_ipu_*`` / ``is_provider_available`` / ``get_circuit_status``：面向调用的便捷 API。
+
+线程不安全（Jardias 单线程运行），无需加锁。
 """
 from __future__ import annotations
 
 import time
+from collections import defaultdict
 from typing import Any
 
 # 耗尽/欠费的错误关键词（参考 Jarvis0 yinao/model_strategy.py）
@@ -18,8 +26,6 @@ EXHAUSTED_KEYWORDS = frozenset((
 class CircuitBreaker:
     """
     熔断器：连续失败 >= threshold 次 → 熔断，reset_after 秒后自动恢复。
-
-    线程不安全（Jardias 单线程运行），无需加锁。
     """
 
     def __init__(self, threshold: int = 2, reset_after: float = 300.0):
@@ -75,3 +81,53 @@ def is_exhausted_error(error: Exception) -> bool:
     # 检查错误消息关键词
     msg = str(error).lower()
     return any(kw.lower() in msg for kw in EXHAUSTED_KEYWORDS)
+
+
+# ── 跨 ipu 共享：每 provider 一个熔断器 ──
+
+_circuit_breakers: dict[str, CircuitBreaker] = defaultdict(CircuitBreaker)
+
+
+def record_ipu_success(provider: str):
+    """记录智能基元调用成功（重置熔断计数器）。"""
+    _circuit_breakers[provider].record_success()
+
+
+def record_ipu_failure(provider: str, error: Exception):
+    """记录智能基元调用失败（累计，达到阈值后熔断）。"""
+    cb = _circuit_breakers[provider]
+    cb.record_failure(f"{type(error).__name__}: {error}")
+    if cb.is_open():
+        from common.logger import logger
+        remaining = int(cb.reset_remaining() or 0)
+        logger.warning(
+            f"[CIRCUIT] 供应商 {provider} 已熔断（{cb._failures}次失败）— {remaining}s 后自动恢复")
+
+
+def is_provider_available(provider: str) -> bool:
+    """检查供应商是否可用（未被熔断）。"""
+    cb = _circuit_breakers.get(provider)
+    if cb is None: return True
+    return not cb.is_open()
+
+
+def get_circuit_status() -> dict:
+    """获取所有供应商的熔断状态快照（LLM 友好格式）。"""
+    from yinao import IPU_REGISTRY
+    result = {}
+    for provider in set(list(IPU_REGISTRY.keys()) + list(_circuit_breakers.keys())):
+        cb = _circuit_breakers.get(provider)
+        if cb and cb._failures > 0:
+            result[provider] = cb.to_dict()
+        else:
+            result[provider] = {"available": True, "failures": 0, "reset_remaining_sec": 0, "last_error": ""}
+    return result
+
+
+__all__ = [
+    'EXHAUSTED_KEYWORDS',
+    'CircuitBreaker',
+    'is_exhausted_error',
+    'record_ipu_success', 'record_ipu_failure',
+    'is_provider_available', 'get_circuit_status',
+]

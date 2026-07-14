@@ -129,7 +129,7 @@ def format_round_usage(usage: dict | None) -> str:
 
     例：'本轮输入 4698 智点，输出 17 智点的思考，9 智点的回答，合计 4724 智点'
     """
-    from common.utils import get_silent
+    from common.cli_output import get_silent
     if get_silent() or not usage:
         return ""
     prompt = usage.get("prompt_tokens", 0)

@@ -66,26 +66,26 @@ def reset_actor() -> None:
 
 @pytest.fixture
 def reset_display() -> None:
-    """复位 common.utils 的全局显示名 / 静默 / 流色。"""
-    from common import utils
+    """复位 common.cli_output 的全局显示名 / 静默 / 流色。"""
+    from common import cli_output
 
-    utils.set_display_name("")
-    utils.set_silent(False)
-    utils.set_stream_color(None)
+    cli_output.set_display_name("")
+    cli_output.set_silent(False)
+    cli_output.set_stream_color(None)
 
 
 @pytest.fixture
 def reset_circuit_breakers() -> None:
-    """复位 yinao.ipu_client.ipu_context 中的熔断器全局状态。"""
-    from yinao.ipu_client import ipu_context
+    """复位 yinao.ipu_client 中的熔断器 + ipu_context/icp_tracker 全局状态。"""
+    from yinao.ipu_client import circuit_breaker, icp_tracker, ipu_switch
 
-    ipu_context.switch_request = None
-    ipu_context._actual_provider = ""
-    ipu_context._actual_ipu = ""
-    ipu_context._circuit_breakers.clear()
-    ipu_context.cumulative_usage.update({"prompt_icp": 0, "completion_icp": 0,
+    circuit_breaker._circuit_breakers.clear()
+    ipu_switch.switch_request = None
+    ipu_switch._actual_provider = ""
+    ipu_switch._actual_ipu = ""
+    icp_tracker.cumulative_usage.update({"prompt_icp": 0, "completion_icp": 0,
                                           "total_icp": 0, "thinking_icp": 0})
-    ipu_context.provider_latency.clear()
+    icp_tracker.provider_latency.clear()
 
 
 @pytest.fixture

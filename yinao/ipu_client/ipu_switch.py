@@ -49,13 +49,13 @@ def _inject_tools(ipu_config: IPUConfig):
 async def reason_action_chat(
         provider: str, messages: list[dict], ipu_config: IPUConfig | None = None,
         character_name: str = "", on_history_save: callable | None = None, ) -> ChatResult:
-    """统一 chat 入口：从 PROVIDER_SPECS 取 spec，按供应商差异调 reason_act_loop。
+    """统一 chat 入口：从 PROVIDER_SPECS 取 spec，按供应商差异调 weave_thought。
 
     调用方应通过 switch.resolve_chat(provider) 拿到预绑定 provider 的 4 参协程；
     直接调用本函数时第一参数必传 provider。
     """
-    # 延迟导入 reason_act_loop，避免 _providers 模块加载时循环依赖
-    from .common_client_util import reason_act_loop
+    # 延迟导入 weave_thought，避免 _providers 模块加载时循环依赖
+    from .thought_weaver import weave_thought
 
     spec = PROVIDER_SPECS[provider]
     if ipu_config is None: ipu_config = IPUConfig(ipu=spec.ipu_default)
@@ -63,7 +63,7 @@ async def reason_action_chat(
     _apply_thinking(ipu_config, spec)
     for k, v in spec.stream_opts.items(): setattr(ipu_config, k, v)
     _inject_tools(ipu_config)
-    return await reason_act_loop(
+    return await weave_thought(
         messages, ipu_config, reasoning_field=spec.reasoning_field, reasoning_inline=spec.reasoning_inline,
         character_name=character_name, on_history_save=on_history_save, )
 
@@ -194,3 +194,57 @@ def next_vision_provider(current: str, tried: set) -> str | None:
         for short_name in IPU_REGISTRY[p]:
             if "vision" in get_ipu_capabilities(p, short_name): return p
     return None
+
+
+# ── 智能基元切换的进程内共享状态 ─────────────────────────────
+# 由 request_switch / pop_switch 在 thought_weaver 与 app.py 之间接力；
+# 由 set_active_ipu / get_active_ipu 暴露"fallback 后实际跑的那个"。
+
+from data_shape import IPUSwitch
+
+
+class IPUSwitched(Exception):
+    """切换智能基元时抛出，携带 (provider, ipu) 供外层捕获并重建 client。"""
+
+    def __init__(self, provider: str, ipu: str):
+        self.provider = provider
+        self.ipu = ipu
+        super().__init__(f"switch to {provider}/{ipu}")
+
+
+switch_request: IPUSwitch | None = None
+
+# 实际运行中的 provider/ipu（fallback 后可能与 config 文件不同）
+_actual_provider: str = ""
+_actual_ipu: str = ""
+
+
+def set_active_ipu(provider: str, ipu: str):
+    """记录当前实际运行的智能基元（fallback/bootstrap 调用）。"""
+    global _actual_provider, _actual_ipu
+    _actual_provider = provider
+    _actual_ipu = ipu
+
+
+def get_active_ipu() -> str:
+    """获取当前实际运行的智能基元简称。"""
+    return _actual_ipu
+
+
+def request_switch(provider: str, ipu: str):
+    """请求切换智能基元（写入共享状态，由 pop_switch 取出）。"""
+    global switch_request
+    if provider not in IPU_REGISTRY:
+        raise ValueError(f"未知供应商: {provider}，可用: {list(IPU_REGISTRY.keys())}")
+    available = list(IPU_REGISTRY[provider].keys())
+    if ipu not in IPU_REGISTRY[provider]:
+        raise ValueError(f"未知智能基元: {ipu}，{provider} 可用: {available}")
+    switch_request = IPUSwitch(provider=provider, ipu=ipu)
+
+
+def pop_switch() -> IPUSwitch | None:
+    """读取并清除切换请求。"""
+    global switch_request
+    req = switch_request
+    switch_request = None
+    return req
