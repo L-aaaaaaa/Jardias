@@ -12,7 +12,7 @@ data_shape — 数据形状层
   tool.py          — ToolDef / ToolParam
 """
 from .yinao_config import ActorConfig, RoleConfig, IPURuntime
-from .ipu import IPUEntry, IPUProviderConfig, IPUConfigFile
+from .ipu import IPUEntry, IPUProviderConfig, IPUConfigFile, AddIPURequest, UpdateIPURequest, RemoveIPURequest
 from .ipu_client import (
     IPUConfig, IPUProvider, ToolCall, RoundOutput, ChatResult, RoundMeta, IPUSwitch,
 )
