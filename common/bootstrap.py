@@ -13,7 +13,7 @@ from data_shape import ActorConfig
 from tool.builtin import set_actor, tools
 from yinao import resolve_ipu
 from yinao.ipu_client import resolve_chat, sync_config_to_ipu
-from yinao.ipu_client._client import get_ipu_reply
+from yinao.ipu_client.reply_getter import get_ipu_reply
 
 
 def _default_system_prompt() -> str:
@@ -118,7 +118,7 @@ def bootstrap(provider: str, ipu: str, character_name: str = "default"):
 def _setup_actor_executor(ctx):
     """创建并注入 @actor_tool 旁路小模型执行器（支持跨 provider 模型路由）。"""
     from tool.actor_tool import set_actor_executor
-    from yinao.ipu_client._client import form_client
+    from yinao.ipu_client.reply_getter import form_client
     from yinao.provider_manager import provider_manager
     from yinao.ipu_client import next_provider, pick_fallback_ipu
     from data_shape import IPUProvider

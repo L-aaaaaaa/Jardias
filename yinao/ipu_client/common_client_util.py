@@ -8,8 +8,8 @@ from common.actor_log import round_start, round_end, max_rounds_reached, format_
 from common.logger import logger
 from common.utils import separate_print, stream_print, set_display_name, get_silent, set_stream_color
 from data_shape import ToolCall, RoundOutput, ChatResult
-from ._client import get_ipu_stream_reply  # noqa: F401
 from .ipu_context import set_round_meta, pop_switch
+from .reply_getter import get_ipu_stream_reply  # noqa: F401
 
 
 def collect_round(stream, reasoning_field: str = "reasoning_details",

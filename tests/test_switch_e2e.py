@@ -1,6 +1,6 @@
 """真实端到端测试：创建角色 → 切换模型 → 验证成功。
 
-通过 monkey-patching PROVIDER_CHAT 让所有 LLM 调用都是 mock，
+通过 monkey-patching switch._CHAT_FNS 让所有 LLM 调用都是 mock，
 避免真实 API 调用消耗 token，专注于验证切换链路。
 """
 from __future__ import annotations

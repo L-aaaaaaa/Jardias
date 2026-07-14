@@ -159,7 +159,19 @@ def _render_single_message(msg: dict) -> list[str]:
     无实质内容时返回空列表。
     """
     role = msg.get("role", "?")
+
+    # system role：
+    #   - 以 "[智能基元切换]" 开头的引擎切换事件：渲染（让 LLM 历史可见切换轨迹）
+    #   - 其它 system（prompt 段、临时注入）：静默丢弃
     if role == "system":
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            content = "\n".join(item.get("text", "") if isinstance(item, dict) else str(item) for item in content)
+        content = str(content)
+        if content.startswith("[智能基元切换]"):
+            ts = msg.get("time", "")[:19] or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            fence = _choose_fence(content)
+            return [f"### [{ts}] system\n\n{fence}text\n{content}\n{fence}"]
         return []
 
     # 过滤推理消息：渲染为独立条目，不丢失
@@ -672,4 +684,23 @@ def init_experience(character_name: str, config) -> None:
 
     path = get_character_dir(character_name) / "experience.md"
     path.parent.mkdir(parents=True, exist_ok=True)
+    _write_experience_file(path, blocks)
+
+
+def sync_experience_system_block(config, character_name: str):
+    """把当前 config.runtime 对应的 engine 信息同步写入 experience.md 的 blocks[0]。
+
+    在 auto-switch（vision / fallback）修改 config.runtime 后调用，
+    确保 experience.md 的 ## 引擎 段与 config.json 同步，
+    角色重启后无需再次触发切换。
+
+    不会改动 blocks[1-3]。
+    """
+    from common.context import build_system_message
+    path = get_character_dir(character_name) / "experience.md"
+    if not path.exists():
+        return  # 角色还未初始化 experience.md，跳过
+    blocks = load_experience(character_name)
+    system_msg = build_system_message(config, character_name)
+    blocks[0] = _flatten_content(system_msg["content"])
     _write_experience_file(path, blocks)

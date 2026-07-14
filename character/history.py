@@ -89,3 +89,12 @@ class History:
         """追加 assistant 消息（用于时策触发后的 LLM 回复，不重复记录 trigger）。"""
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.messages.append({"role": "assistant", "content": content, "time": now})
+
+    def append_system(self, content: str, ts: str | None = None):
+        """追加系统事件消息（引擎切换等元数据）。
+
+        role=system, content 必须以 "[智能基元切换]" 等受控前缀开头，
+        _render_single_message 才能与真正的 system prompt 区分开。
+        """
+        now = ts or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.messages.append({"role": "system", "content": content, "time": now})

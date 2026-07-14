@@ -81,8 +81,16 @@ def auto_switch_for_vision(ctx, image_url: str) -> bool:
     ctx.config.runtime.provider = t_prov
     ctx.config.runtime.ipu = t_ipu
     save_config(ctx.config, ctx.character_name, config_dir=ctx.config_dir)
-
-    from yinao.ipu_client import reload_after_switch
+    from common.experience_core import sync_experience_system_block
+    sync_experience_system_block(ctx.config, ctx.character_name)
+    from yinao.ipu_client import reload_after_switch, format_engine_switch_log
     reload_after_switch(ctx)
+    new_full = ctx.ipu_config.ipu
+    switch_log = format_engine_switch_log(
+        old_prov, old_ipu, ctx.provider, ctx.ipu,
+        old_full=old_full, new_full=new_full,
+        reason="image detected → vision IPU")
+    ctx.history.append_system(switch_log)
+    ctx.history.save()
     log_model_switch(old_prov, old_ipu, ctx.provider, ctx.ipu, reason="image detected → vision IPU")
     return True

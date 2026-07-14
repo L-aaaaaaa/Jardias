@@ -16,7 +16,7 @@ from common.utils import set_display_name
 from tool.builtin import tools, clear_pending_switch
 from yinao import resolve_ipu
 from yinao.ipu_client import resolve_chat, sync_config_to_ipu, reload_after_switch, inform_ipu_switch, \
-    next_provider, pick_fallback_ipu, next_vision_provider
+    format_engine_switch_log, next_provider, pick_fallback_ipu, next_vision_provider
 from yinao.ipu_client.ipu_context import (set_round_meta, update_cumulative, )
 
 
@@ -103,6 +103,14 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
                 retry += 1
                 old_prov, old_ipu = ctx.config.runtime.provider, ctx.config.runtime.ipu
                 reload_after_switch(ctx)
+                switch_log = format_engine_switch_log(
+                    old_prov, old_ipu, ctx.provider, ctx.ipu,
+                    old_full=old_ipu, new_full=ctx.ipu_config.ipu,
+                    reason="LLM requested switch")
+                ctx.history.append_system(switch_log)
+                ctx.history.save()
+                from common.experience_core import sync_experience_system_block
+                sync_experience_system_block(ctx.config, ctx.character_name)
                 log_model_switch(old_prov, old_ipu, ctx.provider, ctx.ipu, reason="LLM requested switch")
                 if retry < 3:
                     switch_note = inform_ipu_switch(old_prov, old_ipu, ctx.provider, ctx.ipu,
@@ -134,7 +142,18 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
                 _, ctx.ipu_config = resolve_ipu(fallback, fm)
                 sync_config_to_ipu(ctx.config, ctx.ipu_config)
                 from yinao.ipu_client.ipu_context import set_active_ipu
+                from character.config_io import save_config
+                from common.experience_core import sync_experience_system_block
                 set_active_ipu(ctx.provider, ctx.ipu)
+                save_config(ctx.config, ctx.character_name, config_dir=ctx.config_dir)
+                sync_experience_system_block(ctx.config, ctx.character_name)
+                # 持久化切换事件到 history（dump 时自动渲染到 experience.md 近期对话原文）
+                switch_log = format_engine_switch_log(
+                    old_prov, old_ipu, ctx.provider, ctx.ipu,
+                    old_full=old_ipu, new_full=ctx.ipu_config.ipu,
+                    reason=f"auto-fallback after {type(e).__name__}")
+                ctx.history.append_system(switch_log)
+                ctx.history.save()
                 log_model_switch(old_prov, old_ipu, ctx.provider, ctx.ipu,
                     reason=f"auto-fallback after {type(e).__name__}")
                 switch_note = inform_ipu_switch(old_prov, old_ipu, ctx.provider, ctx.ipu,

@@ -1,14 +1,6 @@
 """context — 上下文构建：将 ActorConfig + History → IPU 可消费的 messages。"""
 import re as _re_module
-from datetime import datetime
 
-from character.summarizer import (
-    load_compression_log,
-    select_summaries_for_context,
-    build_summary_block,
-    build_recent_history_filtered,
-    _build_recent_history,
-)
 from tool.builtin import tools
 from yinao import IPU_REGISTRY, get_ipu_capabilities
 
@@ -105,6 +97,7 @@ def build_config_context(config, character_name: str | None = None) -> str:
     _env_block = f"""## 运行环境
 
 - 操作系统: {_platform.system()} (shell: {"cmd" if _os.name == "nt" else "bash"})
+- 智能体系统: Jardias（佳递叶思），一套自主协作、记忆成长、时间感知的智能体认知框架
 - 工作目录: {_cwd}
 
 效率提示: 优先使用内置工具(list_dir、file_info、glob)做文件探索，比 bash 更快更可靠。
@@ -113,8 +106,24 @@ def build_config_context(config, character_name: str | None = None) -> str:
     thinking_note = ""
     if rt.thinking_enabled and rt.provider == "deepseek":
         thinking_note = " (⚠️ 思考模式下 temperature/top_p 由 DeepSeek API 忽略，调参无效)"
+    system_prompt = f"""
+## 佳递叶思命名体系
 
-    return f"""## 引擎
+命名决定了我们对架构的理解（反向同样成立），错误的命名会限制我们突破旧有范式，因此本系统执行以下命名重构方案：
+
+| 原始术语 | 重构后术语 | 说明 |
+|---|---|---|
+| AI Model（AI 模型） | 智能基元（IPU） | Intelligence Primitive Unit，产生智能的基本单元，LLM和生物脑（的某种结构）都属于智能基元。 |
+| 模型调用管理模块 | 义脑（Yinao） | IPU 路由 + 供应商抽象层 |
+| Token（矢量文本） | 保持 token，计量单位：智点（ICP） | Intelligence Credit Point |
+| Pixel Patch（矢量像素） | 保持 Pixel Patch，计量单位：智点 | 与 token 统一计量 |
+| AI Agent（智能体） | 智能体 / 智能演员（AI Actor） | 强调自主行动能力 |
+| AI Agent System（智能体系统） | 智能体系统 / 智能演员系统（AI Actor System） | — |
+| 扮演具体设定的智能体 | 角色（character） | 使用时直接称呼具体角色名 |
+
+如果用户希望深入了解，可阅读 `library/命名即架构.md`。
+
+## 引擎
 
 ### 当前配置
 - 智能基元: **{full_name}** (provider={rt.provider})
@@ -122,11 +131,12 @@ def build_config_context(config, character_name: str | None = None) -> str:
 - 参数: temperature={rt.temperature}, top_p={rt.top_p}, max_icp={rt.max_icp}{thinking_note}
 - 思考: mode={rt.thinking_mode}, effort={rt.reasoning_effort}, enabled={'Yes' if rt.thinking_enabled else 'No'}
 
-引擎是你的计算底座，不是你身份。引擎可以切换，身份是稳定的；不要把引擎型号当成自己的名字。
+智能基元是你的计算底座，不是你身份。智能基元可以切换，身份是稳定的；不要把智能基元型号当成自己的名字。
 当被问到「你是谁」→ 依据 `# 身份` 回答。当被问到「你用什么智能基元」→ 依据本节回答。
 
 ### 可切换智能基元
 {chr(10).join(ipu_lines)}
+
 
 ### 工具
 {tool_names}
@@ -143,6 +153,8 @@ def build_config_context(config, character_name: str | None = None) -> str:
 {_build_character_context(character_name)}
 
 {_env_block}"""
+
+    return system_prompt
 
 
 def strip_context_wrapper(message: str) -> str:
@@ -182,7 +194,7 @@ def build_system_message(config, character_name: str = "default",
     engine_block = build_config_context(config, character_name=character_name)
     parts = [f"# 系统提示词\n\n## 身份\n\n{identity_meta}\n\n{identity_block}{birth_note}", engine_block]
     if switch_note:
-        parts.append(switch_note)
+        parts.insert(1, switch_note)
     return {"role": "system", "content": "\n\n".join(parts)}
 
 
@@ -195,7 +207,6 @@ def form_full_context(config, history: list[dict], user_input: str,
         update_experience,
         load_experience,
     )
-    from character import get_history_path
 
     # ── 确保 experience.md 存在 ──
     exp_blocks = load_experience(character_name)

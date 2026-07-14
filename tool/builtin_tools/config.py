@@ -58,13 +58,16 @@ def update_runtime(arguments: dict) -> str:
     _apply_field(args, rt, "thinking_mode", changes)
     if not changes: return "[OK] no changes (all values match current)"
     save_config(config, _current_actor)
-    if not ipu_changed: return f"[OK] runtime updated: {', '.join(changes)}"
+    if not ipu_changed:
+        return f"[OK] runtime updated: {', '.join(changes)}"
     provider = resolve_ipu_provider(rt.ipu)
     error_hint = f"[Error] 无法解析智能基元 '{rt.ipu}' 的供应商。可用智能基元: 2.7快, 2.7, chat, 千问3.6+, kimi 2.5, glm-5, M2.5"
     if provider is None: return error_hint
     if rt.ipu == provider: rt.ipu = next(iter(IPU_REGISTRY[provider].keys()))
     rt.provider = provider;
     save_config(config, _current_actor)
+    from common.experience_core import sync_experience_system_block
+    sync_experience_system_block(config, _current_actor)
     request_switch(provider, rt.ipu)
     success_hint = f"[OK] runtime updated: {', '.join(changes)} → 将切换至 {provider}/{rt.ipu}"
     return success_hint

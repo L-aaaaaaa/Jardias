@@ -1,5 +1,5 @@
 """
-_client.py — OpenAI 客户端与流式请求构造
+reply_getter.py — OpenAI 客户端与流式请求构造
 
 职责：
 - form_client：构造 OpenAI 客户端

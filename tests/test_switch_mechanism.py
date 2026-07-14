@@ -20,7 +20,7 @@ from character.registry import registry
 from character.config_io import save_config
 from data_shape import ActorConfig, RoleConfig, IPURuntime
 from yinao.ipu_client import resolve_chat
-from yinao.ipu_client.common_client_util import PROVIDER_CHAT
+from yinao.ipu_client._providers import PROVIDER_SPECS
 
 
 def setup_test_character(name: str = "switch-test-角色") -> tuple:
@@ -34,8 +34,8 @@ def setup_test_character(name: str = "switch-test-角色") -> tuple:
             shutil.rmtree(char_dir)
 
     # 用第一个可用供应商创建
-    first_prov = list(PROVIDER_CHAT.keys())[0]  # dashscope
-    first_ipu = list(PROVIDER_CHAT.keys())[0] if first_prov in ("dashscope", "deepseek", "minimax") else "default"
+    first_prov = next(iter(PROVIDER_SPECS))  # dashscope
+    first_ipu = first_prov if first_prov in ("dashscope", "deepseek", "minimax") else "default"
 
     # 直接创建配置
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -123,16 +123,19 @@ def test_switch_detection_in_loop():
             pass
 
 
-def test_chat_fn_resolves():
-    """测试：所有注册的 PROVIDER_CHAT 都能正确解析出可用的 reason_action_chat。"""
-    for name, fn in PROVIDER_CHAT.items():
-        assert callable(fn), f"PROVIDER_CHAT['{name}'] 不是可调用的"
-        print(f"  [OK] PROVIDER_CHAT['{name}'] = {fn.__name__}")
+def test_provider_specs_registered():
+    """测试：所有注册的 ProviderSpec 都能通过 PROVIDER_SPECS 拿到。"""
+    assert len(PROVIDER_SPECS) >= 3, f"PROVIDER_SPECS 至少应有 3 个供应商，实得 {len(PROVIDER_SPECS)}"
+    for name in ("dashscope", "deepseek", "minimax"):
+        assert name in PROVIDER_SPECS, f"PROVIDER_SPECS 缺少 {name}"
+        spec = PROVIDER_SPECS[name]
+        assert spec.name == name, f"PROVIDER_SPECS['{name}'].name 应为 {name}，实得 {spec.name}"
+    print(f"  [OK] PROVIDER_SPECS 已注册: {list(PROVIDER_SPECS.keys())}")
 
 
 def test_switch_chat_fn():
     """测试：switch.resolve_chat 对所有供应商都能返回正确的 chat_fn。"""
-    for prov in PROVIDER_CHAT:
+    for prov in PROVIDER_SPECS:
         fn = resolve_chat(prov)
         assert fn is not None, f"resolve_chat('{prov}') 返回 None"
         assert asyncio.iscoroutinefunction(fn), f"resolve_chat('{prov}') 不是协程函数"
@@ -162,21 +165,18 @@ def test_request_switch_round_trip():
 
 def test_provider_spec_configs():
     """测试：三个 ProviderSpec 的配置是否符合预期。"""
-    from yinao.ipu_client import PROVIDER_CHAT as PC
-
     expected = {
         "dashscope": {"thinking_mode": "enable", "reasoning_field": "reasoning_content"},
         "deepseek": {"thinking_mode": "toggle", "reasoning_inline": True},
         "minimax": {"thinking_mode": "m3", "reasoning_field": "reasoning_details"},
     }
 
-    for name, fn in PC.items():
-        # 从闭包中获取 spec
-        spec = fn.__closure__[0].cell_contents  # spec 是第一个自由变量
-        for key, expected_val in expected.get(name, {}).items():
+    for name, expected_attrs in expected.items():
+        spec = PROVIDER_SPECS[name]
+        for key, expected_val in expected_attrs.items():
             actual = getattr(spec, key)
             assert actual == expected_val, \
-                f"PROVIDER_CHAT['{name}'].{key}: 期望 {expected_val}, 实际 {actual}"
+                f"PROVIDER_SPECS['{name}'].{key}: 期望 {expected_val}, 实际 {actual}"
         print(f"  [OK] {name}: thinking_mode={spec.thinking_mode}, "
               f"reasoning_field={spec.reasoning_field}, "
               f"reasoning_inline={spec.reasoning_inline}")
@@ -187,8 +187,8 @@ if __name__ == "__main__":
     print("模型切换机制测试")
     print("=" * 60)
 
-    print("\n[1] PROVIDER_CHAT 注册表检查")
-    test_chat_fn_resolves()
+    print("\n[1] PROVIDER_SPECS 注册表检查")
+    test_provider_specs_registered()
 
     print("\n[2] resolve_chat 解析检查")
     test_switch_chat_fn()
