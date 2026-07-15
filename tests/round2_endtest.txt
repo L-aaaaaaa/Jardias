@@ -1,0 +1,1 @@
+端测第二轮：验证 dump → 块2 写入路径走 adapter.conversation.on_round_complete

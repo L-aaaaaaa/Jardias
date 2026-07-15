@@ -13,7 +13,6 @@ yinao — 智能演员的义脑（策略层 + 智能基元调度）
     chunk_normalizer — 纯解析的 chunk 规范化器
     tool_runner      — 工具执行调度
     circuit_breaker  — 熔断器
-    ipu_context      — 每轮运行状态 + 注入上下文构建
     icp_tracker      — 智点（ICP）累计 + 各供应商延迟
 """
 # 兼容层：从子模块转发所有公开 API
@@ -66,7 +65,6 @@ from yinao.weaver import (
     display_tool_result,
     last_round,
     set_round_meta,
-    build_round_context,
     cumulative_usage,
     provider_latency,
     update_cumulative,

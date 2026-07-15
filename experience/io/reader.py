@@ -1,6 +1,15 @@
 """reader.py — experience.md 读取模块。
 
 从 experience.md 读取并解析出 4 个 message 块。
+
+对外接口：
+    - read_block0/1/2/3(character_name) -> str：读单个块
+    - read_all(character_name) -> dict[int, str]：一次性读 4 块
+    - load_experience(character_name)：read_all 的兼容别名
+
+内部辅助：
+    - _parse_user_input_from_message3：从块3 文本反解出 {timestamp, role, text}
+    - _CHARACTER_NAME_CACHE：dump 操作查 compression_log 时需要的全局缓存
 """
 from __future__ import annotations
 
@@ -19,8 +28,8 @@ _BLOCK_PATTERN = re.compile(
 _CHARACTER_NAME_CACHE: dict[str, str] = {}
 
 
-def load_experience(character_name: str) -> dict[int, str]:
-    """从 experience.md 读取并解析出 4 个 message 块。
+def _read_file_blocks(character_name: str) -> dict[int, str]:
+    """从 experience.md 读取 4 块原始文本（含块3 的 _dump_written_len 剥离）。
 
     返回:
         {0: message0_str, 1: message1_str, 2: message2_str, 3: message3_str}
@@ -51,6 +60,37 @@ def load_experience(character_name: str) -> dict[int, str]:
     result[3] = m3_clean.rstrip()
 
     return result
+
+
+def read_block0(character_name: str) -> str:
+    """读块0（角色身份 / 系统提示）。"""
+    return _read_file_blocks(character_name)[0]
+
+
+def read_block1(character_name: str) -> str:
+    """读块1（动态状态）。"""
+    return _read_file_blocks(character_name)[1]
+
+
+def read_block2(character_name: str) -> str:
+    """读块2（历史：摘要 + 近期对话原文）。"""
+    return _read_file_blocks(character_name)[2]
+
+
+def read_block3(character_name: str) -> str:
+    """读块3（本次用户消息）。"""
+    return _read_file_blocks(character_name)[3]
+
+
+def read_all(character_name: str) -> dict[int, str]:
+    """一次性读 4 块。等价于 load_experience。"""
+    return _read_file_blocks(character_name)
+
+
+# ── 兼容旧 API（所有调用方不动） ──
+def load_experience(character_name: str) -> dict[int, str]:
+    """从 experience.md 读取并解析出 4 个 message 块（read_all 的兼容别名）。"""
+    return read_all(character_name)
 
 
 def _parse_user_input_from_message3(message3: str) -> dict | None:
@@ -87,4 +127,11 @@ def _infer_character_name(blocks: dict[int, str]) -> str | None:
     return _CHARACTER_NAME_CACHE.get("current")
 
 
-__all__ = ['load_experience', '_parse_user_input_from_message3', '_CHARACTER_NAME_CACHE']
+__all__ = [
+    # 新接口
+    'read_block0', 'read_block1', 'read_block2', 'read_block3', 'read_all',
+    # 兼容
+    'load_experience',
+    # 内部
+    '_parse_user_input_from_message3', '_CHARACTER_NAME_CACHE',
+]

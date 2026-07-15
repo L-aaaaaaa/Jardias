@@ -95,8 +95,8 @@ async def _summarize_topic(conversation_text: str) -> dict:
 # ═══════════════════════════════════════════════════════
 
 L1_CHAR_THRESHOLD = 10_000  # 历史总字符数达到此值触发 L1 压缩
-L1_KEEP_RECENT = 6           # 最近保留不压缩的消息条数
-L2_COUNT_THRESHOLD = 10      # L1 摘要达到此条数触发 L2 压缩
+L1_KEEP_RECENT = 6  # 最近保留不压缩的消息条数
+L2_COUNT_THRESHOLD = 10  # L1 摘要达到此条数触发 L2 压缩
 
 
 # ═══════════════════════════════════════════════════════
@@ -149,7 +149,7 @@ def l1summary_from_dict(d: dict) -> L1Summary:
     )
     if not inst.summary and inst.topic:
         inst.summary = [{"from": 0, "to": inst.user_turns,
-                          "topic": inst.topic, "detail": inst.detail}]
+                         "topic": inst.topic, "detail": inst.detail}]
     return inst
 
 
@@ -238,7 +238,7 @@ def _describe_slice(user_turns: int, events: list[str], topic: str) -> str:
 # ═══════════════════════════════════════════════════════
 
 def _build_conversation_text(messages: list[dict], max_chars: int = 12000,
-                             abs_start: int = 0) -> str:
+        abs_start: int = 0) -> str:
     """将消息列表转为带 [msg:N] 绝对索引标记的纯文本，供 LLM 使用。
 
     abs_start: 这段 messages 在 history.json 中的绝对起始索引。
@@ -266,7 +266,7 @@ def _build_conversation_text(messages: list[dict], max_chars: int = 12000,
 
 
 def _build_topic_text(messages: list[dict], max_chars: int = 10000,
-                       abs_start: int = 0) -> str:
+        abs_start: int = 0) -> str:
     """为话题归档构建对话文本——格式与 _build_conversation_text 相同，但限制更短。"""
     return _build_conversation_text(messages, max_chars=max_chars, abs_start=abs_start)
 
@@ -312,7 +312,7 @@ def build_l1(character_name: str, messages: list[dict]) -> L1Summary | None:
 
 
 async def build_l1_llm(character_name: str,
-                        messages: list[dict]) -> L1Summary | None:
+        messages: list[dict]) -> L1Summary | None:
     """使用旁路小模型构建 L1 摘要（语义分段）——增量式，只摘要上次未覆盖的新轮次。
 
     segments 中的 from/to 是绝对消息索引（对应 history.json）。
@@ -358,7 +358,7 @@ async def build_l1_llm(character_name: str,
             from_abs = int(seg.get("from_msg", abs_start))
             to_abs = int(seg.get("to_msg", abs_start + len(incremental_slice) - 1))
             entry = {
-                "from": from_abs,      # 绝对消息索引（兼容旧字段）
+                "from": from_abs,  # 绝对消息索引（兼容旧字段）
                 "to": to_abs,
                 "topic": str(seg.get("topic", "") or "").strip(),
                 "detail": str(seg.get("detail", "") or "").strip(),
@@ -413,8 +413,8 @@ def load_all_l1(character_name: str) -> list[L1Summary]:
     return summaries
 
 
-async def check_and_compress(character_name: str,
-                              messages: list[dict]) -> L1Summary | None:
+async def check_and_compress(
+        character_name: str, messages: list[dict]) -> L1Summary | None:
     """检查是否需要触发 L1 压缩，需要则用 LLM 构建并保存。失败回退机械归总。"""
     summary = await build_l1_llm(character_name, messages)
     if summary is None:
@@ -455,12 +455,12 @@ def build_l1_context(character_name: str, max_items: int = 3) -> str:
 # ═══════════════════════════════════════════════════════
 
 async def archive_recent_talk(character_name: str, messages: list[dict],
-                              time_range_start: str = "",
-                              time_range_end: str = "",
-                              time_ranges: list[list[str]] | None = None,
-                              topic_hint: str = "",
-                              topic_label: str = "",
-                              people: list[str] = None) -> L1Summary:
+        time_range_start: str = "",
+        time_range_end: str = "",
+        time_ranges: list[list[str]] | None = None,
+        topic_hint: str = "",
+        topic_label: str = "",
+        people: list[str] = None) -> L1Summary:
     """按时间戳精确归档一段对话为话题摘要。
 
     由 builtin.py 的 archive_recent_talk 工具调用。
@@ -497,7 +497,7 @@ async def archive_recent_talk(character_name: str, messages: list[dict],
 
     if time_ranges:
         ranges = sorted([(s.strip(), e.strip()) for s, e in time_ranges if s and e],
-                        key=lambda x: x[0])
+            key=lambda x: x[0])
         if not ranges:
             raise ValueError("time_ranges 数组不能为空或全为空字符串")
     elif time_range_start.strip() or time_range_end.strip():
@@ -738,7 +738,7 @@ async def archive_recent_talk(character_name: str, messages: list[dict],
 # ═══════════════════════════════════════════════════════
 
 def build_topics_context(character_name: str,
-                           max_items: int = 20) -> str:
+        max_items: int = 20) -> str:
     """构建所有已归档话题的概览（供 recall_topic 发现话题用）。
 
     格式化为可读的列表，每条包含 topic_label、people、summary。
@@ -779,7 +779,7 @@ def build_topics_context(character_name: str,
 
 
 def recall_topic_by_label(character_name: str,
-                            topic_label: str) -> tuple[L1Summary, str]:
+        topic_label: str) -> tuple[L1Summary, str]:
     """根据话题标签查找最匹配的已归档摘要,并生成续谈注入块。
 
     Returns:
@@ -836,7 +836,7 @@ def recall_topic_by_label(character_name: str,
 
 
 def recall_topic_by_id(character_name: str,
-                        topic_id: str) -> tuple[L1Summary, str]:
+        topic_id: str) -> tuple[L1Summary, str]:
     """根据摘要 ID 精确查找，并生成续谈注入块。"""
     summaries = load_all_l1(character_name)
     for s in summaries:
@@ -892,7 +892,7 @@ def _build_recall_block(character_name: str, s: L1Summary) -> str:
 
 
 def _load_original_messages(character_name: str,
-                              abs_from: int, abs_to: int) -> list[dict]:
+        abs_from: int, abs_to: int) -> list[dict]:
     """从角色 history.json 加载 [abs_from, abs_to] 索引范围的原文。
 
     找不到文件 / 索引越界时回退到空列表(留给调用方降级)。
@@ -920,7 +920,7 @@ def _load_original_messages(character_name: str,
         abs_to = len(msgs) - 1
     if abs_from > abs_to:
         return []
-    return msgs[abs_from:abs_to + 1] 
+    return msgs[abs_from:abs_to + 1]
 
 
 # ═══════════════════════════════════════════════════════
@@ -928,8 +928,8 @@ def _load_original_messages(character_name: str,
 # ═══════════════════════════════════════════════════════
 
 def get_message_slice_raw(messages: list[dict],
-                           from_idx: int,
-                           to_idx: int) -> str:
+        from_idx: int,
+        to_idx: int) -> str:
     """从 messages 中提取指定范围的原文，用于精细续谈。"""
     slice_ = messages[from_idx:to_idx + 1]
     lines = []
@@ -967,12 +967,12 @@ def _save_compression_log(character_name: str, records: list[dict]):
 
 
 def append_compression_record(character_name: str,
-                              source: str,
-                              l1_id: str,
-                              abs_from: int,
-                              abs_to: int,
-                              segment_index: int = 0,
-                              segment_count: int = 1) -> str:
+        source: str,
+        l1_id: str,
+        abs_from: int,
+        abs_to: int,
+        segment_index: int = 0,
+        segment_count: int = 1) -> str:
     """追加一条压缩记录，返回压缩事件 ID。
 
     segment_index / segment_count 是聚合归档的扩展字段：
@@ -1135,9 +1135,8 @@ def _gaps_between_covered(total: int, log: list[dict], manual_only: bool = False
     return gaps
 
 
-def select_summaries_for_context(character_name: str,
-                                 messages: list[dict],
-                                 log: list[dict] | None = None) -> list[L1Summary]:
+def select_summaries_for_context(
+        character_name: str, messages: list[dict], log: list[dict] | None = None) -> list[L1Summary]:
     """入口统一：给定角色名+完整历史+压缩记录，返回应注入上下文的摘要列表。
 
     策略：
@@ -1226,8 +1225,8 @@ def _build_recent_history(history: list[dict], keep_turns: int = 6) -> str:
     return "## 近期对话原文\n\n" + "\n\n".join(messages)
 
 
-def build_recent_history_filtered(messages: list[dict],
-                                   log: list[dict] | None = None) -> str:
+def build_recent_history_filtered(
+        messages: list[dict], log: list[dict] | None = None) -> str:
     """渲染 ## 近期对话原文，跳过所有已被压缩的消息段。
 
     log 为 None 时直接返回全部历史（原行为兼容）。
@@ -1251,9 +1250,8 @@ def build_recent_history_filtered(messages: list[dict],
     return _build_recent_history(messages_out)
 
 
-def _append_compression_after_save(character_name: str,
-                                   summary: L1Summary,
-                                   source: str):
+def _append_compression_after_save(
+        character_name: str, summary: L1Summary, source: str):
     """save_l1 后统一调用：追加 compression_log。
 
     关键设计：archive_recent_talk（manual）和 auto_summarize 都写 compression_log，
@@ -1263,11 +1261,8 @@ def _append_compression_after_save(character_name: str,
     if summary.msg_indices == (0, 0):
         return
     append_compression_record(
-        character_name=character_name,
-        source=source,
-        l1_id=summary.id,
-        abs_from=summary.msg_indices[0],
-        abs_to=summary.msg_indices[1],
-    )
+        character_name=character_name, source=source,
+        l1_id=summary.id, abs_from=summary.msg_indices[0],
+        abs_to=summary.msg_indices[1], )
     logger.info(f"  [compression_log] +1 record | {summary.id} | "
                 f"msg[{summary.msg_indices[0]}:{summary.msg_indices[1]}] | source={source}")

@@ -10,7 +10,7 @@ from collections.abc import Callable
 from character import get_history_path
 from character.history import History
 from character.registry import registry
-from common.context import build_system_message, strip_context_wrapper
+from experience.adapter.conversation import build_system_message, _extract_pure_text
 from common.logger import logger
 from common.cli_output import set_display_name
 from data_shape import ActorConfig, IPURuntime, RoleConfig
@@ -122,7 +122,7 @@ def list_characters() -> str:
 async def send_to_character(arguments: dict) -> str:
     recipient = arguments["recipient"]
     message = arguments["message"]
-    message = strip_context_wrapper(message)
+    message = _extract_pure_text(message)
     hint = f"[Error] 角色 {recipient} 不存在。使用 list_characters 查看可用角色。"
     if not registry.exists(recipient): return hint
     recipient_config = registry.get_config(recipient)

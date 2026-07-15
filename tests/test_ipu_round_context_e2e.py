@@ -17,7 +17,8 @@ from pathlib import Path
 import pytest
 
 from data_shape import RoundMeta
-from experience import icp_cost as ctx_mod
+from yinao.weaver import round_state as ctx_mod
+from experience.adapter import state as state_mod
 from yinao.weaver.icp_tracker import (
     cumulative_usage, provider_latency, update_cumulative, )
 
@@ -72,7 +73,7 @@ class TestRoundContextE2E:
     def test_empty_initial_round(self, alice: str):
         """无 usage / 无 finish_reason / 无 error → 只返回头 '# 状态'。"""
         _set_round()
-        r = ctx_mod.build_round_context(alice)
+        r = state_mod.build_round_context(alice)
         assert r == "# 状态"
 
     def test_with_usage_no_cumulative(self, alice: str):
@@ -81,7 +82,7 @@ class TestRoundContextE2E:
             "prompt_tokens": 1234, "completion_tokens": 567,
             "total_tokens": 1801,
         })
-        r = ctx_mod.build_round_context(alice)
+        r = state_mod.build_round_context(alice)
         assert "**上轮消耗**" in r
         assert "本轮输入 1234 智点" in r
         assert "567 智点的回答" in r
@@ -94,7 +95,7 @@ class TestRoundContextE2E:
         _set_round(usage={
             "prompt_tokens": 100, "completion_tokens": 80, "total_tokens": 180,
         })
-        r = ctx_mod.build_round_context(alice_with_meta)
+        r = state_mod.build_round_context(alice_with_meta)
         # 上轮段
         assert "本轮输入 100 智点" in r
         # 累计段
@@ -111,7 +112,7 @@ class TestRoundContextE2E:
             "total_tokens": 1100,
             "completion_tokens_details": {"reasoning_tokens": 700},
         })
-        r = ctx_mod.build_round_context(alice_with_meta)
+        r = state_mod.build_round_context(alice_with_meta)
         # completion - reasoning = 300
         assert "输出 700 智点的思考，300 智点的回答" in r
 
@@ -128,7 +129,7 @@ class TestRoundContextNotices:
         _set_round(usage={
             "prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20,
         }, finish_reason="length")
-        r = ctx_mod.build_round_context(alice)
+        r = state_mod.build_round_context(alice)
         assert "⚠️ **上轮回复被截断**（达到 max_icp 限制）" in r
         assert "update_runtime" in r
 
@@ -136,13 +137,13 @@ class TestRoundContextNotices:
         """finish_reason='stop' → 不出现截断段。"""
         _set_round(usage={"prompt_tokens": 10, "completion_tokens": 10,
                           "total_tokens": 20}, finish_reason="stop")
-        r = ctx_mod.build_round_context(alice)
+        r = state_mod.build_round_context(alice)
         assert "上轮回复被截断" not in r
 
     def test_error_notice(self, alice: str):
         """error 非空 → 出现错误段。"""
         _set_round(error="TimeoutError: 后端响应超时")
-        r = ctx_mod.build_round_context(alice)
+        r = state_mod.build_round_context(alice)
         assert "⚠️ **上轮调用异常**: TimeoutError: 后端响应超时" in r
 
     def test_truncation_and_error_coexist(self, alice: str):
@@ -151,7 +152,7 @@ class TestRoundContextNotices:
             usage={"prompt_tokens": 1, "completion_tokens": 0, "total_tokens": 1},
             finish_reason="length", error="partial: 服务端甩手",
         )
-        r = ctx_mod.build_round_context(alice)
+        r = state_mod.build_round_context(alice)
         assert "上轮回复被截断" in r
         assert "上轮调用异常" in r
 
@@ -167,7 +168,7 @@ class TestRoundContextLatency:
         """只 1 个 provider 在 provider_latency → 不出延迟段（需要 > 1 个才会出）。"""
         _set_round()
         update_cumulative(None, "dashscope", 2.5)
-        r = ctx_mod.build_round_context(alice)
+        r = state_mod.build_round_context(alice)
         assert "各供应商延迟" not in r
 
     def test_multi_provider_shows_latency(self, alice: str):
@@ -177,7 +178,7 @@ class TestRoundContextLatency:
         update_cumulative(None, "dashscope", 4.0)  # 均值 3.5
         update_cumulative(None, "deepseek", 2.0)
         update_cumulative(None, "deepseek", 2.5)  # 均值 2.25
-        r = ctx_mod.build_round_context(alice)
+        r = state_mod.build_round_context(alice)
         assert "**各供应商延迟**" in r
         # deepseek 2.2s 应排在 dashscope 3.5s 之前
         deepseek_pos = r.index("deepseek")
@@ -190,10 +191,10 @@ class TestRoundContextLatency:
         # 6 个样本的均值 = (1+2+3+4+5+6)/6 = 3.5，但只保留最近 5 个 → 2,3,4,5,6 均值 = 4.0
         for t in (1.0, 2.0, 3.0, 4.0, 5.0, 6.0):
             update_cumulative(None, "deepseek", t)
-        r = ctx_mod.build_round_context(alice)
+        r = state_mod.build_round_context(alice)
         # 要让延迟段出现必须有 2+ provider，补一个
         update_cumulative(None, "dashscope", 1.0)
-        r = ctx_mod.build_round_context(alice)
+        r = state_mod.build_round_context(alice)
         # 提取 deepseek 后面的均值数字
         import re
         m = re.search(r"deepseek\s+([\d.]+)s", r)
@@ -222,7 +223,7 @@ class TestRoundContextWithoutCharacter:
         assert cumulative_usage["prompt_icp"] == 100
         assert cumulative_usage["thinking_icp"] == 20
 
-        r = ctx_mod.build_round_context()  # 不传 character_name
+        r = state_mod.build_round_context()  # 不传 character_name
         assert "**累计消耗**" in r
         assert "累计输入 100 智点" in r
         assert "含 20 智点的思考和 30 智点的回答" in r
@@ -236,7 +237,7 @@ class TestRoundContextWithoutCharacter:
         cumulative_usage.update({
             "prompt_icp": 1, "completion_icp": 1, "total_icp": 2, "thinking_icp": 0,
         })
-        r = ctx_mod.build_round_context(alice_with_meta)
+        r = state_mod.build_round_context(alice_with_meta)
         assert "累计输入 50000 智点" in r
         assert "累计输入 1 智点" not in r
 
@@ -255,7 +256,7 @@ class TestLoadCumulativeRobustness:
             "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2,
         })
         # 无 meta 文件 + 进程内也无累计 → 不输出'累计消耗'
-        r = ctx_mod.build_round_context(alice)
+        r = state_mod.build_round_context(alice)
         assert "**累计消耗**" not in r
 
     def test_meta_file_with_missing_fields(self, tmp_workdir: Path, reset_circuit_breakers):
@@ -273,7 +274,7 @@ class TestLoadCumulativeRobustness:
         _set_round(usage={
             "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2,
         })
-        r = ctx_mod.build_round_context("bob")
+        r = state_mod.build_round_context("bob")
         # 不抛异常 + total_icp 缺字段 → 累计段不出（避免'累计合计 0 智点'）
         assert "**累计消耗**" not in r
         assert "累计合计 0 智点" not in r
@@ -287,7 +288,7 @@ class TestLoadCumulativeRobustness:
         _set_round(usage={
             "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2,
         })
-        r = ctx_mod.build_round_context("carol")
+        r = state_mod.build_round_context("carol")
         # 不抛异常 + 没累计段
         assert "**累计消耗**" not in r
 
@@ -304,7 +305,7 @@ class TestFullRoundThenContext:
         # 这一轮本 provider 调用失败，但仍记了延迟
         update_cumulative(None, "dashscope", 2.5)
         _set_round(error="HTTP 500")
-        r = ctx_mod.build_round_context(alice)
+        r = state_mod.build_round_context(alice)
         assert "上轮调用异常" in r
         # 只有一个 provider → 延迟段不出
         assert "各供应商延迟" not in r
@@ -324,7 +325,7 @@ class TestFullRoundThenContext:
                    "completion_tokens_details": {"reasoning_tokens": 50}},
             finish_reason="stop", api_time=1.5,
         )
-        r = ctx_mod.build_round_context(alice)
+        r = state_mod.build_round_context(alice)
         assert r.startswith("# 状态")
         assert "**上轮消耗**" in r
         assert "本轮输入 100 智点" in r

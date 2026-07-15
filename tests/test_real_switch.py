@@ -25,7 +25,7 @@ from character.config_io import save_config, load_config
 from data_shape import ActorConfig, RoleConfig, IPURuntime
 from common.bootstrap import bootstrap
 from common.lifecycle import _run_turn, _post_round_async, _collect_round_meta, extract_reply
-from common.context import form_full_context
+from experience.adapter.conversation import form_full_context
 from common.actor_log import turn_open
 from tool.builtin import tools
 

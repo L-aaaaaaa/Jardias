@@ -1,22 +1,28 @@
-"""experience 模块 — 对话经验管理。
+"""experience 模块 — 对话经验管理（适配器层）。
 
 聚焦：
-- 4 段结构（message0..message3）的读写
-- 用户输入先写原则：update 不会破坏既有结构
-- 占位符替换（template 中的 %NAME% %USER% 等）
+- 4 段结构（message0..message3）的 IO 层读写
+- 适配层：on_user_input（写块3）/ on_round_complete（写块2 + 清空块3）
+- 业务装配：build_context_from_experience
+- 渲染工具：_render_single_message / _extract_pure_text
+
+接口已迁移：
+    - update_experience(name, "用户输入"/"对话完成"/"dump"...) → 适配层 on_user_input / on_round_complete
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
 from experience import (
-    load_experience, update_experience, init_experience,
+    load_experience, init_experience,
+    on_user_input, on_round_complete,
     build_context_from_experience,
     _extract_pure_text, _render_single_message,
 )
-from experience.reader import _CHARACTER_NAME_CACHE
+from experience.io.reader import _CHARACTER_NAME_CACHE
 from character import ensure_dirs, get_character_dir
 from data_shape import ActorConfig, RoleConfig, IPURuntime
 
@@ -34,14 +40,13 @@ def _clear_char_cache():
     _CHARACTER_NAME_CACHE.clear()
 
 
-# ── init / load / update 主流程 ──────────────────────────
+# ── init / load 主流程 ───────────────────────────
 
 class TestInitLoadRoundTrip:
     def test_init_creates_md(self, tmp_workdir):
         cfg = _make_actor("alice", "你是 alice")
         init_experience("alice", cfg)
         blocks = load_experience("alice")
-        # 应含 4 个 key：0..3
         assert set(blocks.keys()) >= {0, 1, 2, 3}
 
     def test_load_after_init_has_name(self, tmp_workdir):
@@ -51,42 +56,48 @@ class TestInitLoadRoundTrip:
         assert "bob" in blocks[0]
 
 
-class TestUpdateExperience:
-    def test_user_input(self, tmp_workdir):
-        """update(character_name, "用户输入", ...) 应写入 message3。"""
+# ── 适配层：on_user_input / on_round_complete ─────────────────────────
+
+class TestOnUserInput:
+    def test_writes_block3(self, tmp_workdir):
         init_experience("alice", _make_actor("alice"))
-        update_experience("alice", "用户输入",
-                          {"user_input": "今天聊什么", "timestamp": "2026-07-12 18:00:00"})
+        on_user_input("alice", "今天聊什么", timestamp="2026-07-12 18:00:00")
         blocks = load_experience("alice")
         assert "今天聊什么" in blocks[3]
         assert "2026-07-12 18:00:00" in blocks[3]
 
-    def test_user_input_default_timestamp(self, tmp_workdir):
-        """不传 timestamp 应使用当前时间。"""
+    def test_default_timestamp(self, tmp_workdir):
         init_experience("alice", _make_actor("alice"))
-        update_experience("alice", "用户输入", {"user_input": "hi"})
+        on_user_input("alice", "hi")
         blocks = load_experience("alice")
         assert "hi" in blocks[3]
 
-    def test_dialog_done_writes_placeholder(self, tmp_workdir):
-        """对话完成 → message3 写占位（不是清空，LLM 需要看到上下文）。"""
-        init_experience("alice", _make_actor("alice"))
-        update_experience("alice", "用户输入", {"user_input": "x"})
-        # 注入输入 → message3 有内容
-        blocks = load_experience("alice")
-        assert blocks[3] != ""
-        update_experience("alice", "对话完成", {})
-        blocks = load_experience("alice")
-        # 实现可能是「写占位」或「清空」，都算合法
-        assert isinstance(blocks[3], str)
 
-    def test_unknown_op_silent(self, tmp_workdir):
-        """未识别的 operation 名应静默忽略，不抛。"""
+class TestOnRoundComplete:
+    def test_dump_appends_to_block2_and_clears_block3(self, tmp_workdir):
         init_experience("alice", _make_actor("alice"))
-        try:
-            update_experience("alice", "未定义的操作", {"x": 1})
-        except Exception:
-            pytest.fail("未知 operation 不应抛异常")
+        on_user_input("alice", "你好")
+        new_messages = [
+            {"role": "user", "time": "2026-07-12 18:00:01", "content": "你好"},
+            {"role": "assistant", "time": "2026-07-12 18:00:02", "content": "你好我是 alice"},
+        ]
+        on_round_complete("alice", new_messages)
+        blocks = load_experience("alice")
+        # 块2 应有对话原文
+        assert "你好" in blocks[2]
+        assert "你好我是 alice" in blocks[2]
+        assert "## 摘要" in blocks[2]
+        assert "## 近期对话原文" in blocks[2]
+        # 块3 应清空（落到磁盘时由 writer 填入占位符"（等待用户输入）"）
+        assert "你好" not in blocks[3]
+        assert "（等待用户输入）" in blocks[3]
+
+    def test_dump_with_empty_messages_no_op(self, tmp_workdir):
+        init_experience("alice", _make_actor("alice"))
+        on_round_complete("alice", [])
+        blocks = load_experience("alice")
+        # 块2 应保持空骨架（由 init 写入）
+        assert "## 近期对话原文" not in blocks[2] or blocks[2] == ""
 
 
 # ── build_context_from_experience ─────────────────────────
@@ -125,7 +136,6 @@ class TestExtractPureText:
 class TestRenderSingleMessage:
     def test_user_message(self):
         lines = _render_single_message({"role": "user", "content": "hi", "time": "t"})
-        # 返回 list[str]，每条一段 markdown
         assert isinstance(lines, list)
         assert any("hi" in line for line in lines)
 

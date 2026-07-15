@@ -1,4 +1,4 @@
-"""jardias 的 AI 演员框架（义脑 + 角色 + 时策）。"""
+"""佳递叶思智能体框架"""
 import asyncio
 import os
 import signal

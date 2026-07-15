@@ -1,4 +1,4 @@
-"""image — 图片检测与 vision 智能基元自动切换。"""
+"""image — 图片检测与视觉智能基元自动切换。"""
 import base64
 import mimetypes
 import os
@@ -81,8 +81,8 @@ def auto_switch_for_vision(ctx, image_url: str) -> bool:
     ctx.config.runtime.provider = t_prov
     ctx.config.runtime.ipu = t_ipu
     save_config(ctx.config, ctx.character_name, config_dir=ctx.config_dir)
-    from experience import sync_experience_system_block
-    sync_experience_system_block(ctx.config, ctx.character_name)
+    from experience.adapter.init import on_ipu_switch
+    on_ipu_switch(ctx.character_name, ctx.config)
     from yinao.launcher import reload_after_switch, format_engine_switch_log
     reload_after_switch(ctx)
     new_full = ctx.ipu_config.ipu

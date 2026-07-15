@@ -63,7 +63,6 @@ async def archive_recent_talk(arguments: dict) -> str:
     用户指令如「转为摘要」「归档这个话题」时调用。
     """
     from tool.builtin import _current_actor, _format_error
-    from experience import update_experience
     args = _parse_archive_args(arguments)  # 纯函数
     messages = _load_messages(_current_actor)  # 只加载原始数据
     if messages is None: return "[Error] 无历史记录"
@@ -79,8 +78,7 @@ async def archive_recent_talk(arguments: dict) -> str:
     entry = _build_summary_entry(result)
     response = _build_tool_result(result)
     _persist_experience(  # 副作用收口
-        _current_actor, entry, visible_msgs, messages,
-        arguments, response, archive_ts, update_experience)
+        _current_actor, entry, visible_msgs, messages, arguments, response, archive_ts)
     return response
 
 
@@ -252,20 +250,20 @@ def _build_tool_result(summary) -> str:
 
 
 def _persist_experience(character_name, entry, visible_msgs, messages,
-        arguments, response, archive_ts, update_experience_fn):
-    """把归档结果写入 experience.md。
+        arguments, response, archive_ts):
+    """把归档结果写入 experience.md（走 adapter.archive_recall.on_archive）。
 
     physical_total = history.json 当前真实长度，让 archive 写完 written_len 后，
     下次 dump_experience 不会把已渲染的工具调用重复追加。
     """
-    update_experience_fn(character_name, "archive", {
-        "messages": [{"role": "system"}] * 3 + visible_msgs,
-        "visible_msgs": visible_msgs, "summary_entry": entry,
-        "tool_call_args": json.dumps(arguments, ensure_ascii=False),
-        "tool_result": response,
-        "archive_ts": archive_ts,
-        "physical_total": len(messages),
-    })
+    from experience.adapter.archive_recall import on_archive
+    on_archive(
+        character_name,
+        messages=[{"role": "system"}] * 3 + visible_msgs,
+        summary_entry=entry,
+        visible_msgs=visible_msgs,
+        physical_total=len(messages),
+    )
 
 
 def _format_archive_value_error(e: ValueError) -> str:
@@ -292,7 +290,6 @@ def recall_topic(arguments: dict) -> str:
     from character.history import History
     from character.summarizer import (
         build_topics_context, recall_topic_by_id, recall_topic_by_label, )
-    from experience import update_experience
 
     topic_label = arguments.get("topic_label", "")
     topic_id = arguments.get("topic_id", "")
@@ -306,8 +303,8 @@ def recall_topic(arguments: dict) -> str:
     if topic_id:
         try:
             summary, block = recall_topic_by_id(_current_actor, topic_id)
-            update_experience(_current_actor, "recall",
-                {"topic_id": summary.id, "recall_block": block})  # 更新 experience.md
+            from experience.adapter.archive_recall import on_recall
+            on_recall(_current_actor, summary.id, block)  # adapter 层保持调用方统一
             return block
         except ValueError as e:
             return f"[Error] {e}"
@@ -316,8 +313,8 @@ def recall_topic(arguments: dict) -> str:
         try:
             summary, block = recall_topic_by_label(_current_actor, topic_label)
             label = summary.topic_label or summary.topic or "未命名"
-            update_experience(_current_actor, "recall",
-                {"topic_id": summary.id, "recall_block": block})  # 更新 experience.md
+            from experience.adapter.archive_recall import on_recall
+            on_recall(_current_actor, summary.id, block)  # adapter 层保持调用方统一
             return (
                 f"[话题回想] 找到「{label}」（ID: {summary.id}）\n"
                 f"将以下内容注入上下文：\n\n{block}"

@@ -10,7 +10,6 @@ from datetime import datetime as _dt
 from character.config_io import load_config
 from character.summarizer import check_and_compress
 from common.actor_log import turn_open, model_switch as log_model_switch
-from common.context import form_full_context
 from common.logger import logger
 from common.cli_output import set_display_name, separator_to_terminal
 from tool.builtin import tools, clear_pending_switch
@@ -39,13 +38,16 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
 
     # ── 实时落盘：每次 LLM 中间产物直接追加到 history.messages 末尾 ──
     # 设计原则：history.json 是 append-only,顺序 = 真实事件顺序。
-    # 因此 user 在 _run_turn 开头就由 form_full_context 同步追加到 history,
-    # 钩子接着按 messages 顺序追加中间过程(assistant(tc) + tool),
+    # 因此 user 在 _run_turn 开头就由 form_full_context 同步写入 experience.md 块3
+    # （让 archive_recent_talk/recall_topic 工具被调时能立即看到本轮 user），
+    # history.json 的追加由下方 ctx.history.append_user + save 负责。
+    # 钩子接着按 messages 顺序追加中间过程(assistant(tc) + tool)，
     # _post_round 末尾再补 final_assistant。
     # 这样 history 的物理顺序 = user → assistant(tc) → tool → ... → final_assistant。
 
     while retry < 5:
         if messages is None:
+            from experience.adapter.conversation import form_full_context
             messages = form_full_context(ctx.config, ctx.history.messages, user_input,
                 image_url=image_url, switch_note=switch_note,
                 round_context=round_context, character_name=ctx.character_name)
@@ -110,8 +112,8 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
                     reason="LLM requested switch")
                 ctx.history.append_system(switch_log)
                 ctx.history.save()
-                from experience import sync_experience_system_block
-                sync_experience_system_block(ctx.config, ctx.character_name)
+                from experience.adapter.init import on_ipu_switch
+                on_ipu_switch(ctx.character_name, ctx.config)
                 log_model_switch(old_prov, old_ipu, ctx.provider, ctx.ipu, reason="LLM requested switch")
                 if retry < 3:
                     switch_note = inform_ipu_switch(old_prov, old_ipu, ctx.provider, ctx.ipu,
@@ -143,10 +145,10 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
                 sync_config_to_ipu(ctx.config, ctx.ipu_config)
                 from yinao.launcher import set_active_ipu
                 from character.config_io import save_config
-                from experience import sync_experience_system_block
+                from experience.adapter.init import on_ipu_switch
                 set_active_ipu(ctx.provider, ctx.ipu)
                 save_config(ctx.config, ctx.character_name, config_dir=ctx.config_dir)
-                sync_experience_system_block(ctx.config, ctx.character_name)
+                on_ipu_switch(ctx.character_name, ctx.config)
                 # 持久化切换事件到 history（dump 时自动渲染到 experience.md 近期对话原文）
                 switch_log = format_engine_switch_log(
                     old_prov, old_ipu, ctx.provider, ctx.ipu,
@@ -168,7 +170,8 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
 
 
 def _collect_round_meta(round_ok: bool, ctx) -> str:
-    from experience import last_round, build_round_context
+    from yinao.weaver import last_round
+    from experience.adapter.state import build_round_context
     if round_ok:
         update_cumulative(last_round.usage, ctx.provider, last_round.api_time)
     # 传 character_name 让 build_round_context 从 _dump_meta.json 读累计（持久化）
@@ -191,18 +194,18 @@ def _post_round(ctx, user_input: str, messages: list[dict], round_ok: bool = Tru
 
 
 def _build_failure_reply(ctx, messages):
-    from experience import last_round
+    from yinao.weaver import last_round
     err = last_round.error if last_round.error else "未知错误"
     return f"[本轮对话失败] 引擎 {ctx.provider}/{ctx.ipu} 返回错误，且无可用备选供应商。错误: {err}。"
 
 
 async def _post_round_async(ctx, user_input, messages, round_ok=True, ts=None, round_context: str = ""):
     _post_round(ctx, user_input, messages, round_ok, ts=ts)
-    from character.experience import dump_experience
-    from experience import last_round
+    from experience import dump_experience
+    from yinao.weaver import last_round
     # 把本轮 usage 传给 dump_experience，累加到 _dump_meta.json（持久化）
     dump_experience(
-        ctx.character_name, None, round_context=round_context or None,
+        ctx.character_name, round_context=round_context or None,
         round_usage=last_round.usage if round_ok else None, )
     # L1 摘要移到后台任务：避免阻塞主对话循环（v4-flash LLM 摘要耗时 10s+）
     asyncio.create_task(_check_and_compress_safe(ctx.character_name, ctx.history.messages))
