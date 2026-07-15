@@ -110,7 +110,7 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
                     reason="LLM requested switch")
                 ctx.history.append_system(switch_log)
                 ctx.history.save()
-                from common.experience_core import sync_experience_system_block
+                from experience import sync_experience_system_block
                 sync_experience_system_block(ctx.config, ctx.character_name)
                 log_model_switch(old_prov, old_ipu, ctx.provider, ctx.ipu, reason="LLM requested switch")
                 if retry < 3:
@@ -143,7 +143,7 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
                 sync_config_to_ipu(ctx.config, ctx.ipu_config)
                 from yinao.launcher import set_active_ipu
                 from character.config_io import save_config
-                from common.experience_core import sync_experience_system_block
+                from experience import sync_experience_system_block
                 set_active_ipu(ctx.provider, ctx.ipu)
                 save_config(ctx.config, ctx.character_name, config_dir=ctx.config_dir)
                 sync_experience_system_block(ctx.config, ctx.character_name)
@@ -168,7 +168,7 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
 
 
 def _collect_round_meta(round_ok: bool, ctx) -> str:
-    from yinao.weaver import last_round, build_round_context
+    from experience import last_round, build_round_context
     if round_ok:
         update_cumulative(last_round.usage, ctx.provider, last_round.api_time)
     # 传 character_name 让 build_round_context 从 _dump_meta.json 读累计（持久化）
@@ -191,7 +191,7 @@ def _post_round(ctx, user_input: str, messages: list[dict], round_ok: bool = Tru
 
 
 def _build_failure_reply(ctx, messages):
-    from yinao.weaver import last_round
+    from experience import last_round
     err = last_round.error if last_round.error else "未知错误"
     return f"[本轮对话失败] 引擎 {ctx.provider}/{ctx.ipu} 返回错误，且无可用备选供应商。错误: {err}。"
 
@@ -199,7 +199,7 @@ def _build_failure_reply(ctx, messages):
 async def _post_round_async(ctx, user_input, messages, round_ok=True, ts=None, round_context: str = ""):
     _post_round(ctx, user_input, messages, round_ok, ts=ts)
     from character.experience import dump_experience
-    from yinao.weaver import last_round
+    from experience import last_round
     # 把本轮 usage 传给 dump_experience，累加到 _dump_meta.json（持久化）
     dump_experience(
         ctx.character_name, None, round_context=round_context or None,

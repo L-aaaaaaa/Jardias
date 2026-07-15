@@ -1,8 +1,6 @@
-"""
-ipu_context.py — 每轮运行状态 + 注入上下文构建。
+"""icp_cost.py — 每轮运行状态 + 成本追踪模块。
 
-只保留"每轮运行维度的状态"（last_round）和"把状态渲染成给 LLM 看的元信息段"
-（build_round_context）。切换 / 熔断 / ICP 累计已在各自模块里。
+提供 last_round 元数据和 round context 构建。
 """
 from __future__ import annotations
 
@@ -29,7 +27,7 @@ def build_round_context(character_name: str | None = None) -> str:
     累计数据优先从 _dump_meta.json 读取（持久化，跨重启累计），
     未传 character_name 时退回到进程内 cumulative_usage（向后兼容）。
     """
-    from .icp_tracker import (
+    from yinao.weaver.icp_tracker import (
         cumulative_usage, provider_latency,
         _usage_to_icp, _load_cumulative, )
 

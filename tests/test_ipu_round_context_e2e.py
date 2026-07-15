@@ -17,8 +17,8 @@ from pathlib import Path
 import pytest
 
 from data_shape import RoundMeta
-from yinao.ipu_client import ipu_context as ctx_mod
-from yinao.ipu_client.icp_tracker import (
+from experience import icp_cost as ctx_mod
+from yinao.weaver.icp_tracker import (
     cumulative_usage, provider_latency, update_cumulative, )
 
 

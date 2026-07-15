@@ -1,4 +1,4 @@
-"""common/experience_core.py — experience.md 渲染 helper。
+"""experience 模块 — 对话经验管理。
 
 聚焦：
 - 4 段结构（message0..message3）的读写
@@ -11,12 +11,12 @@ from pathlib import Path
 
 import pytest
 
-from common.experience_core import (
+from experience import (
     load_experience, update_experience, init_experience,
     build_context_from_experience,
     _extract_pure_text, _render_single_message,
-    _CHARACTER_NAME_CACHE,
 )
+from experience.reader import _CHARACTER_NAME_CACHE
 from character import ensure_dirs, get_character_dir
 from data_shape import ActorConfig, RoleConfig, IPURuntime
 

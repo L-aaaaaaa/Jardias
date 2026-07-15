@@ -1,7 +1,6 @@
 """context — 上下文构建：将 ActorConfig + History → IPU 可消费的 messages。"""
 import re as _re_module
 
-from tool.builtin import tools
 from yinao import IPU_REGISTRY, get_ipu_capabilities
 
 
@@ -51,6 +50,13 @@ def _caps_summary(caps: set[str]) -> str:
     return ", ".join(labels[c] for c in sorted(caps) if c in labels)
 
 
+def _get_tool_definitions() -> list[str]:
+    """延迟导入 tool.builtin.tools，避免循环依赖。"""
+    from tool.builtin import tools
+    defs = tools.get_definitions()
+    return [t["function"]["name"] for t in defs] if defs else []
+
+
 def _build_shice_guide() -> str:
     from tool.builtin import tools
     names = tools.list_names()
@@ -89,7 +95,7 @@ def build_config_context(config, character_name: str | None = None) -> str:
         ipu_lines.append(f"  {provider}: {', '.join(entries)}")
 
     tool_names = ", ".join(
-        tools.get_definitions() and [t["function"]["name"] for t in tools.get_definitions()] or []
+        _get_tool_definitions() or []
     )
 
     import platform as _platform, os as _os
@@ -202,7 +208,7 @@ def form_full_context(config, history: list[dict], user_input: str,
         image_url: str = None, switch_note: str = None,
         round_context: str = "", character_name: str = "default") -> list[dict]:
     """固定 3 消息 + 用户输入 = 消息数 O(1)。"""
-    from common.experience_core import (
+    from experience import (
         build_context_from_experience,
         update_experience,
         load_experience,
@@ -211,7 +217,7 @@ def form_full_context(config, history: list[dict], user_input: str,
     # ── 确保 experience.md 存在 ──
     exp_blocks = load_experience(character_name)
     if not exp_blocks[0]:  # message0 为空，说明未初始化
-        from common.experience_core import init_experience
+        from experience import init_experience
         init_experience(character_name, config)
 
     # ── 步骤1：先将用户输入写入 experience.md（用户输入先写原则） ──

@@ -123,7 +123,8 @@ def test_switch_detection_in_loop():
     finally:
         tw._run_single_round = original_round
         try:
-            ctx_mod.switch_request = None
+            from yinao.launcher.ipu_switch import switch_request as _sr
+            _sr = None  # 重置引用
         except NameError:
             pass
 
@@ -155,8 +156,8 @@ def test_request_switch_round_trip():
     from data_shape import IPUSwitch
 
     # 确保全局状态干净
-    import yinao.ipu_client.ipu_context as ctx_mod
-    ctx_mod.switch_request = None
+    from yinao.launcher.ipu_switch import switch_request
+    ctx_mod = None  # not used
 
     request_switch("deepseek", "v4-pro")
     req = pop_switch()

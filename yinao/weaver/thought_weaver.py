@@ -19,7 +19,7 @@ from common.actor_log import (
 from common.logger import logger
 from common.cli_output import set_display_name, get_silent, separate_print, stream_print, set_stream_color
 from data_shape import ChatResult, RoundOutput
-from .ipu_context import set_round_meta
+from experience import set_round_meta
 from yinao.launcher import pop_switch, get_ipu_stream_reply
 from .chunk_normalizer import collect_stream
 from .tool_runner import (

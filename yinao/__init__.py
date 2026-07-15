@@ -73,3 +73,40 @@ from yinao.weaver import (
 )
 # 兼容旧的 ipu_client 导入路径
 from yinao import launcher, weaver
+from yinao.launcher import ipu_switch
+from yinao.weaver import tool_runner, chunk_normalizer, thought_weaver, icp_tracker, circuit_breaker
+
+import sys
+# ipu_client 兼容层：让旧的 yinao.ipu_client.xxx 导入仍能工作
+class _IpuClientCompat:
+    """模拟已删除的 yinao.ipu_client 包。"""
+    def __getattr__(self, name):
+        if name == "resolve_chat":
+            from yinao.launcher import resolve_chat as f; return f
+        if name == "sync_config_to_ipu":
+            from yinao.launcher import sync_config_to_ipu as f; return f
+        if name == "reload_after_switch":
+            from yinao.launcher import reload_after_switch as f; return f
+        if name == "ipu_switch":
+            from yinao.launcher import ipu_switch as m; return m
+        if name == "circuit_breaker":
+            from yinao.weaver import circuit_breaker as m; return m
+        if name == "tool_runner":
+            from yinao.weaver import tool_runner as m; return m
+        if name == "chunk_normalizer":
+            from yinao.weaver import chunk_normalizer as m; return m
+        if name == "thought_weaver":
+            from yinao.weaver import thought_weaver as m; return m
+        if name == "icp_tracker":
+            from yinao.weaver import icp_tracker as m; return m
+        raise AttributeError(f"module 'yinao.ipu_client' has no attribute '{name}'")
+
+sys.modules['yinao.ipu_client'] = _IpuClientCompat()
+sys.modules['yinao.ipu_client.ipu_switch'] = launcher.ipu_switch
+sys.modules['yinao.ipu_client.circuit_breaker'] = weaver.circuit_breaker
+sys.modules['yinao.ipu_client.tool_runner'] = weaver.tool_runner
+sys.modules['yinao.ipu_client.chunk_normalizer'] = weaver.chunk_normalizer
+sys.modules['yinao.ipu_client.thought_weaver'] = weaver.thought_weaver
+sys.modules['yinao.ipu_client.icp_tracker'] = weaver.icp_tracker
+sys.modules['yinao.ipu_config_manager'] = launcher.ipu_config_manager
+sys.modules['yinao.config_resolver'] = launcher.config_resolver

@@ -63,7 +63,7 @@ async def archive_recent_talk(arguments: dict) -> str:
     用户指令如「转为摘要」「归档这个话题」时调用。
     """
     from tool.builtin import _current_actor, _format_error
-    from common.experience_core import update_experience
+    from experience import update_experience
     args = _parse_archive_args(arguments)  # 纯函数
     messages = _load_messages(_current_actor)  # 只加载原始数据
     if messages is None: return "[Error] 无历史记录"
@@ -292,7 +292,7 @@ def recall_topic(arguments: dict) -> str:
     from character.history import History
     from character.summarizer import (
         build_topics_context, recall_topic_by_id, recall_topic_by_label, )
-    from common.experience_core import update_experience
+    from experience import update_experience
 
     topic_label = arguments.get("topic_label", "")
     topic_id = arguments.get("topic_id", "")

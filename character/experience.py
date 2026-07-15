@@ -8,7 +8,7 @@ experience.py — 增量写 experience.md
 - _render_messages_as_dialogue：消息列表 → 对话格式
 - dump_experience：增量追加对话历史到 experience.md
 
-依赖：character.history.History / common.experience_core / character 目录工具
+依赖：character.history.History / experience 模块 / character 目录工具
 与其他 ipu_client 模块零耦合。
 """
 from __future__ import annotations
@@ -101,7 +101,7 @@ def dump_experience(character_name: str, messages: list[dict] | None = None,
     round_usage: 当前轮次的 usage，累加到 _dump_meta.json 的累计字段（持久化）。
     """
     import json  # 局部 import（与原文件保持一致）
-    from common.experience_core import update_experience, load_experience, _write_experience_file
+    from experience import update_experience, load_experience, _write_experience_file
     from character import get_character_dir, get_history_path
     from character.history import History
     from yinao.weaver.icp_tracker import _usage_to_icp

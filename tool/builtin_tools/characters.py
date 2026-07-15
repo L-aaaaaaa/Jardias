@@ -15,8 +15,7 @@ from common.logger import logger
 from common.cli_output import set_display_name
 from data_shape import ActorConfig, IPURuntime, RoleConfig
 from tool.builtin import _current_actor, set_actor
-from yinao import IPU_REGISTRY, resolve_ipu, list_ipu_providers
-from yinao.ipu_client import resolve_chat, sync_config_to_ipu
+from yinao import IPU_REGISTRY, resolve_ipu, list_ipu_providers, resolve_chat, sync_config_to_ipu
 
 
 _SEND_TO_CHARACTER_POST_MSG = {

@@ -67,7 +67,7 @@ def update_runtime(arguments: dict) -> str:
     if rt.ipu == provider: rt.ipu = next(iter(IPU_REGISTRY[provider].keys()))
     rt.provider = provider;
     save_config(config, _current_actor)
-    from common.experience_core import sync_experience_system_block
+    from experience import sync_experience_system_block
     sync_experience_system_block(config, _current_actor)
     request_switch(provider, rt.ipu)
     success_hint = f"[OK] runtime updated: {', '.join(changes)} → 将切换至 {provider}/{rt.ipu}"

@@ -869,10 +869,10 @@ def _build_recall_block(character_name: str, s: L1Summary) -> str:
     if not ranges_to_load:
         return ""
 
-    # 用 experience_core 的 _render_single_message 渲染每条消息
+    # 用 experience 模块的 _render_single_message 渲染每条消息
     # ——与「## 近期对话原文」段同款 7.md 格式：### [ts] role(name) + code block。
     try:
-        from common.experience_core import _render_single_message
+        from experience import _render_single_message
     except ImportError:
         return ""  # 降级：返回空字符串（让上层暴露为 tool error）
 

@@ -12,107 +12,15 @@ from common.logger import logger
 from data_shape import ActorConfig
 from tool.builtin import set_actor, tools
 from yinao import resolve_ipu
-from yinao.launcher import resolve_chat, sync_config_to_ipu, set_active_ipu, next_provider, pick_fallback_ipu
-from yinao.launcher.reply_getter import get_ipu_reply, form_client
-from yinao.launcher.ipu_config_manager import ipu_config_manager
+from yinao.launcher import resolve_chat, sync_config_to_ipu
+from yinao.launcher.reply_getter import get_ipu_reply
+
 
 def _default_system_prompt() -> str:
     return (
         "You are an AI assistant with file operations, code execution and self-config capabilities. "
         "Use tools when needed and adjust your runtime config freely."
     )
-
-
-def bootstrap(provider: str, ipu: str, character_name: str = "default"):
-    from dataclasses import dataclass
-
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-    # 检查角色是否存在
-    from character.registry import registry
-    if not registry.exists(character_name) and character_name != "default":
-        print(f"[Error] 角色 '{character_name}' 不存在。可用角色: {', '.join(registry.scan())}")
-        sys.exit(1)
-
-    ensure_dirs(character_name)
-    history_path = str(get_history_path(character_name))
-    config_dir = os.path.join(base_dir, "character", character_name)
-
-    legacy_history = os.path.join(base_dir, "history.json")
-    if os.path.exists(legacy_history) and not os.path.exists(history_path):
-        import shutil
-        shutil.copy2(legacy_history, history_path)
-        logger.info(f"  📁 历史迁移 | {legacy_history} → {history_path}")
-
-    set_actor(character_name)
-
-    config_dir = os.path.join(base_dir, "config")
-    try:
-        config = load_config(character_name, config_dir=config_dir)
-    except (FileNotFoundError, Exception):
-        config = init_config(character_name, config_dir=config_dir)
-        config.identity.system_prompt = _default_system_prompt()
-        config.runtime.provider = provider
-        config.runtime.ipu = ipu
-        save_config(config, character_name, config_dir=config_dir)
-    else:
-        if not config.identity.system_prompt:
-            config.identity.system_prompt = _default_system_prompt()
-        if config.runtime.provider:
-            provider = config.runtime.provider
-        if config.runtime.ipu:
-            ipu = config.runtime.ipu
-
-    history = History(history_path).load()
-
-    # 首次对话 — 记录角色诞生时间
-    if not config.identity.birth_time:
-        if not history.messages:
-            config.identity.birth_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            save_config(config, character_name, config_dir=config_dir)
-            logger.info(f"  🐣 角色诞生 | {config.identity.birth_time}")
-        elif history.messages[0].get("time"):
-            config.identity.birth_time = history.messages[0]["time"]
-            save_config(config, character_name, config_dir=config_dir)
-            logger.info(f"  🐣 诞生时间恢复 | {config.identity.birth_time}")
-
-    @dataclass
-    class AppContext:
-        config: ActorConfig
-        provider: str
-        ipu: str
-        chat_fn: object
-        ipu_config: object
-        history: History
-        config_dir: str
-        turn_num: int
-        character_name: str = ""
-        last_config_sig: str = ""
-
-    _prov, ipu_config = resolve_ipu(provider, ipu)
-
-    ctx = AppContext(
-        config=config,
-        provider=provider,
-        ipu=ipu,
-        chat_fn=resolve_chat(provider),
-        ipu_config=ipu_config,
-        history=history,
-        config_dir=config_dir,
-        turn_num=int(len(history.messages) / 2) + 1,
-        character_name=character_name,
-    )
-    sync_config_to_ipu(ctx.config, ctx.ipu_config)
-
-    from yinao.launcher import set_active_ipu
-    set_active_ipu(provider, ipu)
-
-    tool_defs = tools.get_definitions()
-    bootstrap_summary(len(ctx.history.messages), ctx.provider, ctx.ipu, len(tool_defs))
-
-    _setup_actor_executor(ctx)
-    _setup_scheduler(ctx)
-    return ctx
 
 
 def _setup_actor_executor(ctx):
@@ -297,3 +205,95 @@ def _setup_scheduler(ctx):
     _set_tool_scheduler(scheduler)
     asyncio.ensure_future(scheduler.start())
     logger.info(f"  [时策] 调度器已启动 | 存储: {store_path}")
+
+
+def bootstrap(provider: str, ipu: str, character_name: str = "default"):
+    from dataclasses import dataclass
+
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    # 检查角色是否存在
+    from character.registry import registry
+    if not registry.exists(character_name) and character_name != "default":
+        print(f"[Error] 角色 '{character_name}' 不存在。可用角色: {', '.join(registry.scan())}")
+        sys.exit(1)
+
+    ensure_dirs(character_name)
+    history_path = str(get_history_path(character_name))
+    config_dir = os.path.join(base_dir, "character", character_name)
+
+    legacy_history = os.path.join(base_dir, "history.json")
+    if os.path.exists(legacy_history) and not os.path.exists(history_path):
+        import shutil
+        shutil.copy2(legacy_history, history_path)
+        logger.info(f"  📁 历史迁移 | {legacy_history} → {history_path}")
+
+    set_actor(character_name)
+
+    config_dir = os.path.join(base_dir, "config")
+    try:
+        config = load_config(character_name, config_dir=config_dir)
+    except (FileNotFoundError, Exception):
+        config = init_config(character_name, config_dir=config_dir)
+        config.identity.system_prompt = _default_system_prompt()
+        config.runtime.provider = provider
+        config.runtime.ipu = ipu
+        save_config(config, character_name, config_dir=config_dir)
+    else:
+        if not config.identity.system_prompt:
+            config.identity.system_prompt = _default_system_prompt()
+        if config.runtime.provider:
+            provider = config.runtime.provider
+        if config.runtime.ipu:
+            ipu = config.runtime.ipu
+
+    history = History(history_path).load()
+
+    # 首次对话 — 记录角色诞生时间
+    if not config.identity.birth_time:
+        if not history.messages:
+            config.identity.birth_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            save_config(config, character_name, config_dir=config_dir)
+            logger.info(f"  🐣 角色诞生 | {config.identity.birth_time}")
+        elif history.messages[0].get("time"):
+            config.identity.birth_time = history.messages[0]["time"]
+            save_config(config, character_name, config_dir=config_dir)
+            logger.info(f"  🐣 诞生时间恢复 | {config.identity.birth_time}")
+
+    @dataclass
+    class AppContext:
+        config: ActorConfig
+        provider: str
+        ipu: str
+        chat_fn: object
+        ipu_config: object
+        history: History
+        config_dir: str
+        turn_num: int
+        character_name: str = ""
+        last_config_sig: str = ""
+
+    _prov, ipu_config = resolve_ipu(provider, ipu)
+
+    ctx = AppContext(
+        config=config,
+        provider=provider,
+        ipu=ipu,
+        chat_fn=resolve_chat(provider),
+        ipu_config=ipu_config,
+        history=history,
+        config_dir=config_dir,
+        turn_num=int(len(history.messages) / 2) + 1,
+        character_name=character_name,
+    )
+    sync_config_to_ipu(ctx.config, ctx.ipu_config)
+
+    from yinao.launcher import set_active_ipu
+    set_active_ipu(provider, ipu)
+
+    tool_defs = tools.get_definitions()
+    bootstrap_summary(len(ctx.history.messages), ctx.provider, ctx.ipu, len(tool_defs))
+
+    _setup_actor_executor(ctx)
+    _setup_scheduler(ctx)
+    return ctx

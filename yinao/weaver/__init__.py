@@ -26,7 +26,7 @@ from .tool_runner import (
     log_tool_result,
     display_tool_result,
 )
-from .ipu_context import last_round, set_round_meta, build_round_context
+from experience import last_round, set_round_meta, build_round_context
 from .icp_tracker import (
     cumulative_usage,
     provider_latency,

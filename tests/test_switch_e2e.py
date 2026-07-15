@@ -96,8 +96,8 @@ async def main():
     ccu.execute_tool = _fake_update_runtime
 
     # 重置全局切换状态
-    import yinao.ipu_client.ipu_context as ctx_mod
-    ctx_mod.switch_request = None
+    from yinao.launcher.ipu_switch import switch_request
+    ctx_mod = None  # not used
 
     # 构建上下文
     ctx = bootstrap("dashscope", "千问3.6+", character_name=char_name)
