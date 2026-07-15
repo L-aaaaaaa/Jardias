@@ -17,11 +17,10 @@ from common.actor_log import (
     format_api_ok, format_round_usage,
 )
 from common.logger import logger
-from common.cli_output import set_display_name, get_silent, separate_print, present_round
+from common.cli_output import set_display_name, get_silent, separate_print, stream_print, set_stream_color
 from data_shape import ChatResult, RoundOutput
 from .ipu_context import set_round_meta
-from .ipu_switch import pop_switch
-from .reply_getter import get_ipu_stream_reply
+from yinao.launcher import pop_switch, get_ipu_stream_reply
 from .chunk_normalizer import collect_stream
 from .tool_runner import (
     ToolRunner, log_tool_calls, display_tool_calls,
@@ -47,9 +46,32 @@ async def _run_single_round(messages: list[dict], iteration: int, ipu_config,
     t0 = time.perf_counter()
     silent = get_silent()
 
+    # 实时流式输出回调
+    reasoning_header_printed = [False]
+    content_header_printed = [not is_tool_round]  # 非工具轮次默认打印回复标题
+
+    def on_reasoning(text: str):
+        """推理内容实时输出"""
+        if silent:
+            return
+        if not reasoning_header_printed[0]:
+            reasoning_header_printed[0] = True
+            set_stream_color('yellow')
+            separate_print(title='推理过程')
+        stream_print(text)
+
+    def on_content(text: str):
+        """正文内容实时输出"""
+        if silent:
+            return
+        if content_header_printed[0]:
+            content_header_printed[0] = False
+            separate_print(title='回复')
+        stream_print(text)
+
     output = collect_stream(stream, reasoning_field=reasoning_field,
-        is_tool_round=is_tool_round)
-    present_round(output, silent=silent, is_tool_round=is_tool_round)
+        is_tool_round=is_tool_round,
+        on_reasoning=on_reasoning, on_content=on_content)
 
     if not silent:
         print()

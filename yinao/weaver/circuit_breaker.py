@@ -113,7 +113,7 @@ def is_provider_available(provider: str) -> bool:
 
 def get_circuit_status() -> dict:
     """获取所有供应商的熔断状态快照（LLM 友好格式）。"""
-    from yinao import IPU_REGISTRY
+    from yinao.launcher import IPU_REGISTRY
     result = {}
     for provider in set(list(IPU_REGISTRY.keys()) + list(_circuit_breakers.keys())):
         cb = _circuit_breakers.get(provider)

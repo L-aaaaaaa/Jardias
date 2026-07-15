@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from character.config_io import load_config
 from common.logger import logger
 from data_shape import IPUConfig, ChatResult
-from yinao import resolve_ipu, IPU_REGISTRY, get_ipu_capabilities
+from yinao.launcher import resolve_ipu, IPU_REGISTRY, get_ipu_capabilities
 
 
 @dataclass
@@ -55,7 +55,7 @@ async def reason_action_chat(
     直接调用本函数时第一参数必传 provider。
     """
     # 延迟导入 weave_thought，避免 _providers 模块加载时循环依赖
-    from .thought_weaver import weave_thought
+    from yinao.weaver import weave_thought
 
     spec = PROVIDER_SPECS[provider]
     if ipu_config is None: ipu_config = IPUConfig(ipu=spec.ipu_default)

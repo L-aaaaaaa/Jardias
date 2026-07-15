@@ -17,8 +17,8 @@ def update_runtime(arguments: dict) -> str:
     from tool.builtin import _current_actor, _apply_field, _format_circuit_error, _format_validation_error
     from character.config_io import load_config, save_config
     from yinao import IPU_REGISTRY
-    from yinao.ipu_client.circuit_breaker import is_provider_available
-    from yinao.ipu_client.ipu_switch import get_active_ipu, request_switch
+    from yinao.weaver import is_provider_available
+    from yinao.launcher import get_active_ipu, request_switch
     from yinao import resolve_ipu_provider
 
     # ── 解析参数（pydantic 自动做类型/范围/枚举校验）──

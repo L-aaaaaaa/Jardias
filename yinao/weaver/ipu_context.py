@@ -29,7 +29,7 @@ def build_round_context(character_name: str | None = None) -> str:
     累计数据优先从 _dump_meta.json 读取（持久化，跨重启累计），
     未传 character_name 时退回到进程内 cumulative_usage（向后兼容）。
     """
-    from yinao.ipu_client.icp_tracker import (
+    from .icp_tracker import (
         cumulative_usage, provider_latency,
         _usage_to_icp, _load_cumulative, )
 

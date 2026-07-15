@@ -2,7 +2,7 @@
 
 职责：
 - 把供应商原始 chunk 流规范化为 ``RoundOutput``（reasoning / content / tool_calls / usage / finish_reason）。
-- 不做终端展示、不读 ``silent``、不写 logger；调用方负责把 RoundOutput 交给 ``presenter``。
+- 支持实时流式输出回调（on_reasoning / on_content），边解析边输出。
 
 设计：
 - 状态机增量解析；不依赖 OpenAI SDK 任何具体类型，只通过 ``getattr`` 读字段。
@@ -10,11 +10,12 @@
     - ``reasoning_content``：DeepSeek 类增量流（每片都直接是新增片段）。
     - ``reasoning_details``：MiniMax 类累计流（每片是完整累计值，需要前缀差量）。
 - 支持自定义 think 标记（默认：``【think`` … ``】/think``），跨 chunk 安全。
+- 支持实时流式输出：传入 ``on_reasoning`` / ``on_content`` 回调，在解析过程中即时调用。
 """
 from __future__ import annotations
 
 import re as _re
-from types import SimpleNamespace
+from typing import Callable
 
 from data_shape import ToolCall, RoundOutput
 
@@ -65,7 +66,9 @@ def _diff_cumulative(prev: str, cur: str) -> str:
 # ────────────────────────────── chunk 处理 ──────────────────────────────
 
 
-def _process_chunk(chunk, accum: dict) -> None:
+def _process_chunk(chunk, accum: dict, *,
+        on_reasoning: Callable[[str], None] | None = None,
+        on_content: Callable[[str], None] | None = None) -> None:
     """单 chunk 解析：累加 reasoning/content/tool_calls/usage/finish_reason。"""
     usage = getattr(chunk, 'usage', None)
     if usage:
@@ -78,12 +81,13 @@ def _process_chunk(chunk, accum: dict) -> None:
     delta = choices[0].delta
     accum['finish_reason'] = choices[0].finish_reason
 
-    _extract_reasoning(delta, accum)
-    _extract_content(delta, accum)
+    _extract_reasoning(delta, accum, on_reasoning=on_reasoning)
+    _extract_content(delta, accum, on_content=on_content)
     _extract_tool_calls(delta, accum)
 
 
-def _extract_reasoning(delta, accum: dict) -> None:
+def _extract_reasoning(delta, accum: dict, *,
+        on_reasoning: Callable[[str], None] | None = None) -> None:
     if accum['reasoning_field'] == 'reasoning_content':
         rc = getattr(delta, 'reasoning_content', None)
         if not rc:
@@ -100,6 +104,8 @@ def _extract_reasoning(delta, accum: dict) -> None:
             accum['reasoning_prev'] = cur
         if new_text:
             _append_reasoning(accum, new_text)
+            if on_reasoning:
+                on_reasoning(new_text)
     else:
         details = getattr(delta, 'reasoning_details', None)
         if not details:
@@ -116,6 +122,8 @@ def _extract_reasoning(delta, accum: dict) -> None:
         accum['reasoning_prev'] = joined
         if delta_text:
             _append_reasoning(accum, delta_text)
+            if on_reasoning:
+                on_reasoning(delta_text)
 
 
 def _append_reasoning(accum: dict, text: str) -> None:
@@ -125,12 +133,13 @@ def _append_reasoning(accum: dict, text: str) -> None:
         accum['reasoning_parts'].append(text)
 
 
-def _extract_content(delta, accum: dict) -> None:
+def _extract_content(delta, accum: dict, *,
+        on_content: Callable[[str], None] | None = None) -> None:
     dc = getattr(delta, 'content', None)
     if not dc:
         return
     accum['think_buffer'] += dc
-    _flush_think_buffer(accum)
+    _flush_think_buffer(accum, on_content=on_content)
 
 
 def _extract_tool_calls(delta, accum: dict) -> None:
@@ -157,7 +166,8 @@ def _extract_tool_calls(delta, accum: dict) -> None:
 # ────────────────────────────── think 状态机 ──────────────────────────────
 
 
-def _flush_think_buffer(accum: dict) -> None:
+def _flush_think_buffer(accum: dict, *,
+        on_content: Callable[[str], None] | None = None) -> None:
     """在 think/正文状态间迁移。安全前缀保留到下次递归。"""
     buf = accum['think_buffer']
     if not buf:
@@ -170,18 +180,22 @@ def _flush_think_buffer(accum: dict) -> None:
             buf = buf[idx + len(THINK_OPEN):]
             if pre:
                 accum['content_buffer'].append(pre)
+                if on_content:
+                    on_content(pre)
             accum['in_think'] = True
             accum['think_acc'] = ''
             if accum['reasoning_source'] is None:
                 accum['reasoning_source'] = 'think'
             accum['think_buffer'] = buf
-            _flush_think_buffer(accum)
+            _flush_think_buffer(accum, on_content=on_content)
             return
         safe = _strip_tail_ambiguous(buf, THINK_OPEN)
         if len(safe) < len(buf):
             emit = buf[:len(buf) - len(safe)]
             if emit:
                 accum['content_buffer'].append(emit)
+                if on_content:
+                    on_content(emit)
             accum['think_buffer'] = safe
     else:
         idx = buf.find(THINK_CLOSE)
@@ -196,9 +210,11 @@ def _flush_think_buffer(accum: dict) -> None:
             accum['think_acc'] = ''
             if post:
                 accum['content_buffer'].append(post)
+                if on_content:
+                    on_content(post)
             accum['think_buffer'] = ''
             if post:
-                _flush_think_buffer(accum)
+                _flush_think_buffer(accum, on_content=on_content)
             return
         safe = _strip_tail_ambiguous(buf, THINK_CLOSE)
         if len(safe) < len(buf):
@@ -214,7 +230,9 @@ def _flush_think_buffer(accum: dict) -> None:
 
 
 def collect_stream(stream, *, reasoning_field: str = 'reasoning_details',
-        is_tool_round: bool = False) -> RoundOutput:
+        is_tool_round: bool = False,
+        on_reasoning: Callable[[str], None] | None = None,
+        on_content: Callable[[str], None] | None = None) -> RoundOutput:
     """消费原始 chunk 流，返回结构化 ``RoundOutput``。
 
     参数：
@@ -222,15 +240,17 @@ def collect_stream(stream, *, reasoning_field: str = 'reasoning_details',
     - reasoning_field：``'reasoning_details'``（累计流，MiniMax 类）
       或 ``'reasoning_content'``（增量流，DeepSeek 类）。
     - is_tool_round：仅作为元数据被附加到 ``RoundOutput``；当前不影响解析逻辑。
+    - on_reasoning：推理内容实时回调（每解析到新推理片段时调用）。
+    - on_content：正文内容实时回调（每解析到新正文片段时调用）。
 
     返回：``RoundOutput(reasoning, content, tool_calls, finish_reason, usage)``
     """
     accum = _new_accumulator(reasoning_field)
     for chunk in stream:
-        _process_chunk(chunk, accum)
+        _process_chunk(chunk, accum, on_reasoning=on_reasoning, on_content=on_content)
 
     # 收尾：未关闭的 think 标签视为正文（剥掉外壳）
-    _finalize_think_buffer(accum)
+    _finalize_think_buffer(accum, on_content=on_content)
 
     calls = [ToolCall(id=e['id'], name=e['name'], arguments=e['arguments'])
              for e in accum['tool_calls'] if e['name']]
@@ -257,7 +277,8 @@ def _new_accumulator(reasoning_field: str) -> dict:
     }
 
 
-def _finalize_think_buffer(accum: dict) -> None:
+def _finalize_think_buffer(accum: dict, *,
+        on_content: Callable[[str], None] | None = None) -> None:
     if accum['in_think']:
         return  # 整段已记入 reasoning，不重复处理
     tail = accum['think_buffer']
@@ -273,6 +294,8 @@ def _finalize_think_buffer(accum: dict) -> None:
                     break
     if cleaned:
         accum['content_buffer'].append(cleaned)
+        if on_content:
+            on_content(cleaned)
 
 
 __all__ = ['collect_stream', 'THINK_OPEN', 'THINK_CLOSE']

@@ -104,7 +104,7 @@ def dump_experience(character_name: str, messages: list[dict] | None = None,
     from common.experience_core import update_experience, load_experience, _write_experience_file
     from character import get_character_dir, get_history_path
     from character.history import History
-    from yinao.ipu_client.icp_tracker import _usage_to_icp
+    from yinao.weaver.icp_tracker import _usage_to_icp
 
     # 始终从磁盘读取最新状态
     hp = str(get_history_path(character_name))

@@ -12,9 +12,9 @@ from common.logger import logger
 from data_shape import ActorConfig
 from tool.builtin import set_actor, tools
 from yinao import resolve_ipu
-from yinao.ipu_client import resolve_chat, sync_config_to_ipu
-from yinao.ipu_client.reply_getter import get_ipu_reply
-
+from yinao.launcher import resolve_chat, sync_config_to_ipu, set_active_ipu, next_provider, pick_fallback_ipu
+from yinao.launcher.reply_getter import get_ipu_reply, form_client
+from yinao.launcher.ipu_config_manager import ipu_config_manager
 
 def _default_system_prompt() -> str:
     return (
@@ -104,7 +104,7 @@ def bootstrap(provider: str, ipu: str, character_name: str = "default"):
     )
     sync_config_to_ipu(ctx.config, ctx.ipu_config)
 
-    from yinao.ipu_client.ipu_switch import set_active_ipu
+    from yinao.launcher import set_active_ipu
     set_active_ipu(provider, ipu)
 
     tool_defs = tools.get_definitions()
@@ -118,9 +118,9 @@ def bootstrap(provider: str, ipu: str, character_name: str = "default"):
 def _setup_actor_executor(ctx):
     """创建并注入 @actor_tool 旁路小模型执行器（支持跨 provider 模型路由）。"""
     from tool.actor_tool import set_actor_executor
-    from yinao.ipu_client.reply_getter import form_client
-    from yinao.ipu_config_manager import ipu_config_manager
-    from yinao.ipu_client import next_provider, pick_fallback_ipu
+    from yinao.launcher.reply_getter import form_client
+    from yinao.launcher.ipu_config_manager import ipu_config_manager
+    from yinao.launcher import next_provider, pick_fallback_ipu
     from data_shape import IPUProvider
 
     _provider_clients: dict[str, object] = {}
@@ -255,8 +255,7 @@ def _setup_actor_executor(ctx):
                 return result
             except Exception as e:
                 last_error = e
-                from yinao.ipu_client import is_exhausted_error
-                from yinao.ipu_client.circuit_breaker import record_ipu_failure
+                from yinao.weaver import is_exhausted_error, record_ipu_failure
                 try:
                     if is_exhausted_error(e):
                         record_ipu_failure(fb_provider, e)

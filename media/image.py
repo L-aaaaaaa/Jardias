@@ -83,7 +83,7 @@ def auto_switch_for_vision(ctx, image_url: str) -> bool:
     save_config(ctx.config, ctx.character_name, config_dir=ctx.config_dir)
     from common.experience_core import sync_experience_system_block
     sync_experience_system_block(ctx.config, ctx.character_name)
-    from yinao.ipu_client import reload_after_switch, format_engine_switch_log
+    from yinao.launcher import reload_after_switch, format_engine_switch_log
     reload_after_switch(ctx)
     new_full = ctx.ipu_config.ipu
     switch_log = format_engine_switch_log(

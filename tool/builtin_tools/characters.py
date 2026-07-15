@@ -15,10 +15,8 @@ from common.logger import logger
 from common.cli_output import set_display_name
 from data_shape import ActorConfig, IPURuntime, RoleConfig
 from tool.builtin import _current_actor, set_actor
-from yinao import IPU_REGISTRY, resolve_ipu
+from yinao import IPU_REGISTRY, resolve_ipu, list_ipu_providers
 from yinao.ipu_client import resolve_chat, sync_config_to_ipu
-from yinao import (
-    IPU_REGISTRY as _IPU_REGISTRY_RUNTIME, list_ipu_providers, )
 
 
 _SEND_TO_CHARACTER_POST_MSG = {
@@ -256,7 +254,7 @@ async def _call_recipient(
                     current_provider, current_ipu_short, "",)
             old_provider, old_model = current_provider, current_ipu_short
             current_provider = available[0]
-            current_ipu_short = next(iter(_IPU_REGISTRY_RUNTIME.get(current_provider, {}).keys()), "v4-flash")
+            current_ipu_short = next(iter(IPU_REGISTRY.get(current_provider, {}).keys()), "v4-flash")
             try:
                 _, current_ipu_config = resolve_ipu(current_provider, current_ipu_short)
             except KeyError as ke:

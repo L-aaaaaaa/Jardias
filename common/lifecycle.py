@@ -15,10 +15,10 @@ from common.logger import logger
 from common.cli_output import set_display_name, separator_to_terminal
 from tool.builtin import tools, clear_pending_switch
 from yinao import resolve_ipu
-from yinao.ipu_client import resolve_chat, sync_config_to_ipu, reload_after_switch, inform_ipu_switch, \
-    format_engine_switch_log, next_provider, pick_fallback_ipu, next_vision_provider
-from yinao.ipu_client.ipu_context import set_round_meta
-from yinao.ipu_client.icp_tracker import update_cumulative
+from yinao.launcher import resolve_chat, sync_config_to_ipu, reload_after_switch, inform_ipu_switch
+from yinao.launcher import format_engine_switch_log, next_provider, pick_fallback_ipu, next_vision_provider
+from yinao.weaver import set_round_meta
+from yinao.weaver import update_cumulative
 
 
 def extract_reply(messages: list[dict]) -> str:
@@ -121,13 +121,12 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
                     if switch_note:
                         messages.append({"role": "user", "content": switch_note})
                 continue
-            from yinao.ipu_client.circuit_breaker import record_ipu_success
+            from yinao.weaver import record_ipu_success
             record_ipu_success(ctx.provider)
             return True, messages
         except Exception as e:
             logger.error(f"  [ERROR] 调用异常 | {ctx.provider}/{ctx.ipu} | {type(e).__name__}: {e}")
-            from yinao.ipu_client import is_exhausted_error
-            from yinao.ipu_client.circuit_breaker import record_ipu_failure
+            from yinao.weaver import is_exhausted_error, record_ipu_failure
             if is_exhausted_error(e):
                 record_ipu_failure(ctx.provider, e)
             need_vision = bool(image_url)
@@ -142,7 +141,7 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
                 ctx.chat_fn = resolve_chat(fallback)
                 _, ctx.ipu_config = resolve_ipu(fallback, fm)
                 sync_config_to_ipu(ctx.config, ctx.ipu_config)
-                from yinao.ipu_client.ipu_switch import set_active_ipu
+                from yinao.launcher import set_active_ipu
                 from character.config_io import save_config
                 from common.experience_core import sync_experience_system_block
                 set_active_ipu(ctx.provider, ctx.ipu)
@@ -169,7 +168,7 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
 
 
 def _collect_round_meta(round_ok: bool, ctx) -> str:
-    from yinao.ipu_client.ipu_context import last_round, build_round_context
+    from yinao.weaver import last_round, build_round_context
     if round_ok:
         update_cumulative(last_round.usage, ctx.provider, last_round.api_time)
     # 传 character_name 让 build_round_context 从 _dump_meta.json 读累计（持久化）
@@ -192,7 +191,7 @@ def _post_round(ctx, user_input: str, messages: list[dict], round_ok: bool = Tru
 
 
 def _build_failure_reply(ctx, messages):
-    from yinao.ipu_client.ipu_context import last_round
+    from yinao.weaver import last_round
     err = last_round.error if last_round.error else "未知错误"
     return f"[本轮对话失败] 引擎 {ctx.provider}/{ctx.ipu} 返回错误，且无可用备选供应商。错误: {err}。"
 
@@ -200,7 +199,7 @@ def _build_failure_reply(ctx, messages):
 async def _post_round_async(ctx, user_input, messages, round_ok=True, ts=None, round_context: str = ""):
     _post_round(ctx, user_input, messages, round_ok, ts=ts)
     from character.experience import dump_experience
-    from yinao.ipu_client.ipu_context import last_round
+    from yinao.weaver import last_round
     # 把本轮 usage 传给 dump_experience，累加到 _dump_meta.json（持久化）
     dump_experience(
         ctx.character_name, None, round_context=round_context or None,
@@ -236,7 +235,7 @@ async def _do_switch_character(ctx, name: str):
     ctx.chat_fn = resolve_chat(ctx.provider)
     _, ctx.ipu_config = resolve_ipu(ctx.provider, ctx.ipu)
     sync_config_to_ipu(ctx.config, ctx.ipu_config)
-    from yinao.ipu_client.ipu_switch import set_active_ipu
+    from yinao.launcher import set_active_ipu
     set_active_ipu(ctx.provider, ctx.ipu)
     ctx.history = History(str(get_history_path(name))).load()
     ctx.turn_num = int(len(ctx.history.messages) / 2) + 1

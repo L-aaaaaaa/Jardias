@@ -41,7 +41,7 @@ def _build_engine_menu() -> tuple[list[str], dict[int, tuple[str, str]]]:
     \u4ece IPU_REGISTRY \u52a8\u6001\u6784\u5efa\u667a\u80fd\u57fa\u5143\u9009\u62e9\u83dc\u5355\u3002
     返回 (显示行列表, {序号: (provider, model_short)})。
     """
-    from yinao.config_resolver import IPU_REGISTRY
+    from yinao.launcher.config_resolver import IPU_REGISTRY
     display_lines: list[str] = []
     idx_map: dict[int, tuple[str, str]] = {}
     i = 1

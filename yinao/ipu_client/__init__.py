@@ -1,19 +1,10 @@
 """
-ipu_client — 多供应商智能基元客户端
+ipu_client — 兼容层
 
-按需延迟加载（避免循环导入）：
-- 子模块首次访问时才真正 import
-- 顶层常用符号从 switch / thought_weaver / chunk_normalizer / presenter 暴露
+此模块已重构为 yinao.launcher 和 yinao.weaver
+此处保留以兼容旧导入路径
 """
-from __future__ import annotations
-
-from . import circuit_breaker  # noqa: F401  (含 CircuitBreaker / is_exhausted_error)
-from . import ipu_switch, thought_weaver  # noqa: F401
-from .circuit_breaker import is_exhausted_error
-from .thought_weaver import weave_thought, WEAVE_MAX_TURNS
-from .chunk_normalizer import collect_stream, THINK_OPEN, THINK_CLOSE
-# 转发常用入口（避免上层 import 时找不到符号）
-from .ipu_switch import (
+from yinao.launcher import (
     resolve_chat,
     sync_config_to_ipu,
     reload_after_switch,
@@ -22,5 +13,53 @@ from .ipu_switch import (
     next_provider,
     pick_fallback_ipu,
     next_vision_provider,
+    get_ipu_stream_reply,
+    get_ipu_reply,
+    form_client,
+    ipu_switch as ipu_switch_module,
+    ipu_config_manager,
+    config_resolver,
+    reply_getter,
 )
-from .reply_getter import get_ipu_stream_reply
+from yinao.weaver import (
+    weave_thought,
+    WEAVE_MAX_TURNS,
+    collect_stream,
+    THINK_OPEN,
+    THINK_CLOSE,
+    ToolRunner,
+    log_tool_calls,
+    display_tool_calls,
+    log_tool_result,
+    display_tool_result,
+    last_round,
+    set_round_meta,
+    build_round_context,
+    cumulative_usage,
+    provider_latency,
+    update_cumulative,
+    is_exhausted_error,
+    record_ipu_success,
+    record_ipu_failure,
+    is_provider_available,
+    get_circuit_status,
+    CircuitBreaker,
+    circuit_breaker as circuit_breaker_module,
+    ipu_context as ipu_context_module,
+    tool_runner as tool_runner_module,
+    chunk_normalizer as chunk_normalizer_module,
+    thought_weaver as thought_weaver_module,
+    icp_tracker as icp_tracker_module,
+)
+
+# 兼容子模块导入
+import yinao.launcher.ipu_switch as ipu_switch
+import yinao.launcher.ipu_config_manager as ipu_config_manager
+import yinao.launcher.config_resolver as config_resolver
+import yinao.launcher.reply_getter as reply_getter
+import yinao.weaver.circuit_breaker as circuit_breaker
+import yinao.weaver.ipu_context as ipu_context
+import yinao.weaver.tool_runner as tool_runner
+import yinao.weaver.chunk_normalizer as chunk_normalizer
+import yinao.weaver.thought_weaver as thought_weaver
+import yinao.weaver.icp_tracker as icp_tracker
