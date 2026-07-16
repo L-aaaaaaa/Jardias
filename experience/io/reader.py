@@ -6,6 +6,8 @@
     - read_block0/1/2/3(character_name) -> str：读单个块
     - read_all(character_name) -> dict[int, str]：一次性读 4 块
     - load_experience(character_name)：read_all 的兼容别名
+    - load_all_l1(character_name) -> list[L1Summary]：读所有 L1 摘要
+    - load_compression_log(character_name) -> list[dict]：读压缩记录表
 
 内部辅助：
     - _parse_user_input_from_message3：从块3 文本反解出 {timestamp, role, text}
@@ -13,6 +15,7 @@
 """
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -127,9 +130,83 @@ def _infer_character_name(blocks: dict[int, str]) -> str | None:
     return _CHARACTER_NAME_CACHE.get("current")
 
 
+# ═══════════════════════════════════════════════════════════════════
+# L1 摘要读写（summaries/L1/{id}.json）
+# ═══════════════════════════════════════════════════════════════════
+
+def load_all_l1(character_name: str) -> list:
+    """加载所有 L1 摘要（按 ID 排序）。"""
+    from character import get_summaries_dir
+
+    l1_dir = get_summaries_dir(character_name)
+    if not l1_dir.exists():
+        return []
+    summaries: list = []
+    for f in sorted(l1_dir.glob("*.json")):
+        try:
+            with open(f, "r", encoding="utf-8") as fh:
+                summaries.append(l1summary_from_dict(json.load(fh)))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return summaries
+
+
+# ═══════════════════════════════════════════════════════════════════
+# compression_log.json 读写（summaries/compression_log.json）
+# ═══════════════════════════════════════════════════════════════════
+
+def load_compression_log(character_name: str) -> list[dict]:
+    """读取压缩记录表，返回所有压缩事件列表（按时间顺序）。"""
+    from character import get_compression_log_path
+
+    path = get_compression_log_path(character_name)
+    if not path.exists():
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+# ═══════════════════════════════════════════════════════════════════
+# L1Summary ↔ dict 序列化（与读写同一处，writer 也会用 from_dict）
+# ═══════════════════════════════════════════════════════════════════
+
+def l1summary_from_dict(d: dict):
+    """从 dict 还原 L1Summary。"""
+    from data_shape import L1Summary
+
+    inst = L1Summary(
+        id=d.get("id", ""),
+        start_time=d.get("start_time", ""),
+        end_time=d.get("end_time", ""),
+        message_count=d.get("message_count", 0),
+        user_turns=d.get("user_turns", 0),
+        topic=d.get("topic", ""),
+        detail=d.get("detail", ""),
+        key_events=d.get("key_events", []),
+        summary=d.get("summary", []),
+        topic_label=d.get("topic_label", ""),
+        people=d.get("people", []),
+        msg_indices=tuple(d.get("msg_indices", [0, 0])),
+        source=d.get("source", "auto"),
+        time_ranges=d.get("time_ranges", []) or [],
+        range_msg_indices=d.get("range_msg_indices", []) or [],
+    )
+    if not inst.summary and inst.topic:
+        inst.summary = [{"from": 0, "to": inst.user_turns,
+                         "topic": inst.topic, "detail": inst.detail}]
+    return inst
+
+
 __all__ = [
     # 新接口
     'read_block0', 'read_block1', 'read_block2', 'read_block3', 'read_all',
+    # L1 / compression_log IO
+    'load_all_l1', 'load_compression_log',
+    # L1Summary 序列化
+    'l1summary_from_dict',
     # 兼容
     'load_experience',
     # 内部

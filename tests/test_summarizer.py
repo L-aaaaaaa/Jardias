@@ -1,14 +1,17 @@
-"""character/summarizer.py — 纯逻辑 helpers（不需要 LLM）。
+"""拆分后经验模块业务（测试入口）
 
-重点覆盖：
-- _covered_ranges 合并算法（边界 + 重叠 + 相邻）
-- _gaps_between_covered 对比
-- _extract_send_to_character_targets ground truth
-- _build_topic_label_regex 「话题1」不匹配「话题12」
-- _is_archive_trigger 前缀识别
-- l1summary_to_dict / l1summary_from_dict 序列化兼容
-- select_summaries_for_context 选摘要策略
-- build_l1（机械归总）阈值与边界
+原 summarizer.py 业务已分散到：
+- experience.io：load_all_l1 / load_compression_log / save_l1 / append_compression_record /
+                l1summary_to_dict / l1summary_from_dict / l1summary_to_context_string
+- experience.adapter.archive_recall：
+    * 算法：_covered_ranges / _gaps_between_covered / _extract_send_to_character_targets /
+            _build_topic_label_regex / _is_archive_trigger / _ARCHIVE_TRIGGER_PREFIXES
+    * L1 构建：build_l1 / build_l1_llm
+    * LLM 工具：_summarize_conversation / _summarize_topic
+- experience.adapter.conversation：
+    * select_summaries_for_context / build_l1_context / build_summary_block
+
+本测试对所有这些拆分后的函数做纯逻辑覆盖（不依赖 LLM 调用）。
 """
 from __future__ import annotations
 
@@ -17,18 +20,22 @@ from pathlib import Path
 
 import pytest
 
-from character import summarizer
-from character.summarizer import (
+from data_shape import L1Summary
+from experience.adapter import archive_recall as archive_recall
+from experience.adapter.archive_recall import (
     _covered_ranges, _gaps_between_covered,
     _extract_send_to_character_targets,
     _build_topic_label_regex, _is_archive_trigger,
     _ARCHIVE_TRIGGER_PREFIXES,
-    l1summary_to_dict, l1summary_from_dict,
-    select_summaries_for_context,
-    build_l1, save_l1, load_all_l1, load_compression_log,
-    MAX_L1_IN_CONTEXT,
+    build_l1,
 )
-from data_shape import L1Summary
+from experience.io import (
+    l1summary_to_dict, l1summary_from_dict,
+    save_l1, load_all_l1, load_compression_log, append_compression_record,
+)
+from experience.adapter.conversation import (
+    select_summaries_for_context, MAX_L1_IN_CONTEXT,
+)
 
 
 # ── _covered_ranges 合并算法 ───────────────────────────────────
@@ -259,9 +266,10 @@ class TestL1Serialization:
 
     def test_ensure_summary_from_topic(self):
         """旧版只有 topic/detail，summary=空时由 helper 填充。"""
+        from experience.io.writer import _l1_ensure_summary
         s = L1Summary(id="L1-x", topic="t", detail="d", user_turns=5)
         assert s.summary == []
-        summarizer._l1_ensure_summary(s)
+        _l1_ensure_summary(s)
         assert len(s.summary) == 1
         assert s.summary[0]["topic"] == "t"
 
@@ -293,7 +301,9 @@ class TestBuildL1Threshold:
 
     def test_above_threshold_triggers(self):
         """字符数 ≥ 阈值 + 切片非空 → 返回 L1Summary。"""
-        from character.summarizer import L1_CHAR_THRESHOLD, L1_KEEP_RECENT
+        from experience.adapter.archive_recall import (
+            L1_CHAR_THRESHOLD, L1_KEEP_RECENT,
+        )
         # 制造足够长的内容触发
         big = "a" * 100
         msgs = []
@@ -318,3 +328,87 @@ class TestBuildL1Threshold:
 class TestArchivePrefixListNonEmpty:
     def test_has_prefixes(self):
         assert len(_ARCHIVE_TRIGGER_PREFIXES) >= 5
+
+
+# ── _merge_or_append_summary：跨次归档互不合并 ───────────────
+
+class TestMergeOrAppendSummary:
+    """回归测试：跨次手动归档（不同 ID）即使 msg_indices 重叠也不应被合并。
+
+    历史 bug：早期版本按 msg_indices 重叠合并，导致「你好」[0,7] + 「笑话」[4,5]
+    被误判为「同一话题的扩展」，第二条直接覆盖第一条，造成信息丢失。
+    """
+
+    def _entry(self, id_: str, msg_from: int, msg_to: int, detail: str = "d"):
+        return {"id": id_, "msg_indices": [msg_from, msg_to], "detail": detail,
+                "topic_label": id_}
+
+    def test_two_overlapping_archives_kept_separately(self):
+        """[0,7] + [4,5] 重叠 → 都保留。"""
+        from experience.io.writer import _merge_or_append_summary
+
+        blocks = {2: "## 摘要\n\n```json\n[]\n```"}
+        e1 = self._entry("T-A", 0, 7, "话题1")
+        e2 = self._entry("T-B", 4, 5, "话题2")
+        _merge_or_append_summary(blocks, e1)
+        result = _merge_or_append_summary(blocks, e2)
+
+        assert len(result) == 2, "两条独立归档应并存，不应合并"
+        ids = sorted([e["id"] for e in result])
+        assert ids == ["T-A", "T-B"]
+        # 顺序按 msg_from 升序
+        assert result[0]["id"] == "T-A"
+        assert result[1]["id"] == "T-B"
+
+    def test_three_archives_no_merging(self):
+        """三条独立归档（部分重叠、相邻、分散）都应保留。"""
+        from experience.io.writer import _merge_or_append_summary
+
+        blocks = {2: ""}
+        _merge_or_append_summary(blocks, self._entry("T-A", 0, 7))
+        _merge_or_append_summary(blocks, self._entry("T-B", 4, 5))
+        _merge_or_append_summary(blocks, self._entry("T-C", 9, 12))
+
+        arr = _merge_or_append_summary(blocks, self._entry("T-D", 6, 8))
+        assert len(arr) == 4
+
+    def test_empty_blocks(self):
+        """空块2 + 第一条归档 → 数组含 1 条。"""
+        from experience.io.writer import _merge_or_append_summary
+
+        blocks = {2: ""}
+        result = _merge_or_append_summary(blocks, self._entry("T-A", 0, 3))
+        assert len(result) == 1
+        assert result[0]["id"] == "T-A"
+
+    def test_existing_summary_block_preserved(self):
+        """已有 ## 摘要 段被正确解析、追加而非清空。"""
+        from experience.io.writer import _merge_or_append_summary
+
+        existing = (
+            "## 摘要\n\n"
+            "```json\n"
+            '[{"id": "T-OLD", "msg_indices": [0, 5], "detail": "old"}]\n'
+            "```"
+        )
+        blocks = {2: existing}
+        result = _merge_or_append_summary(blocks, self._entry("T-NEW", 6, 9))
+
+        assert len(result) == 2
+        ids = sorted([e["id"] for e in result])
+        assert ids == ["T-NEW", "T-OLD"]
+
+    def test_legacy_string_entries_purged(self):
+        """旧版 entries 可能是字符串（防御性清理），不应进入新 arr。"""
+        from experience.io.writer import _merge_or_append_summary
+
+        existing = (
+            "## 摘要\n\n"
+            "```json\n"
+            '["old string entry"]\n'
+            "```"
+        )
+        blocks = {2: existing}
+        result = _merge_or_append_summary(blocks, self._entry("T-NEW", 0, 3))
+        assert len(result) == 1
+        assert result[0]["id"] == "T-NEW"

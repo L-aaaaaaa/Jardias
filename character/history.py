@@ -34,6 +34,23 @@ class History:
                 self.messages = []
         return self
 
+    def load_slice(self, abs_from: int, abs_to: int) -> list[dict]:
+        """返回 [abs_from, abs_to] 索引范围的原文切片。
+
+        找不到文件 / 索引越界时回退到空列表（留给调用方降级）。
+        自动 clamp 到 [0, len-1]；abs_from > abs_to 返回空列表。
+        """
+        msgs = self.load().messages
+        if not msgs:
+            return []
+        if abs_from < 0:
+            abs_from = 0
+        if abs_to >= len(msgs):
+            abs_to = len(msgs) - 1
+        if abs_from > abs_to:
+            return []
+        return msgs[abs_from:abs_to + 1]
+
     def save(self):
         try:
             # 确保父目录存在（default 角色目录可能未显式创建）。

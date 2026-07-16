@@ -138,5 +138,15 @@
     "role": "assistant",
     "content": "🥭 芒果",
     "time": "2026-07-06 20:05:47"
+  },
+  {
+    "role": "user",
+    "content": "[来自 default 的消息]\n你好，请随便说一个水果名字。",
+    "time": "2026-07-15 23:15:10"
+  },
+  {
+    "role": "assistant",
+    "content": "🍇 葡萄",
+    "time": "2026-07-15 23:15:10"
   }
 ]

@@ -1,7 +1,7 @@
 """builtin_tools/context — 历史摘要 / 归档 / 召回工具。
 
 依赖 ``tool.builtin`` 调度层的 ``_current_actor / _format_error`` 以及
-``character.summarizer`` 的 ``archive_recent_talk / _gaps_between_covered / 等``，
+``experience.adapter.archive_recall`` / ``experience.io`` 的归档/召回/IO，
 皆在函数体内延迟 import。
 """
 from __future__ import annotations
@@ -16,9 +16,13 @@ def summarize_conversation(arguments: dict) -> str:
     """角色主动压缩早期对话历史。"""
     from tool.builtin import _current_actor
     from character import get_history_path
-    from character.summarizer import (
-        L1Summary, append_compression_record, l1summary_to_context_string, save_l1,
-        _analyze_slice, _describe_slice, _guess_topic, )
+    from data_shape import L1Summary
+    from experience.io import (
+        save_l1, append_compression_record, l1summary_to_context_string,
+    )
+    from experience.adapter.archive_recall import (
+        _analyze_slice, _describe_slice, _guess_topic,
+    )
     from common.logger import logger
     keep_recent_turns = int(arguments.get("keep_recent_turns", 6))
     topic_hint = arguments.get("topic", "")
@@ -54,7 +58,7 @@ def summarize_conversation(arguments: dict) -> str:
         f"  文件: {saved_path}", ]
     logger.info(f"  📦 角色主动摘要 | {user_turns} 轮 → {topic} | {saved_path}")
     append_compression_record(character_name=_current_actor, source="summarize_conversation",
-        l1_id=summary.id, abs_from=abs_from, abs_to=abs_to)  # 追加 compression_log
+        l1_id=summary.id, abs_from=abs_from, abs_to=abs_to)
     return "\n".join(lines)
 
 
@@ -191,11 +195,11 @@ def _validate_purity(messages: list[dict], args: ArchiveArgs) -> str | None:
 
 
 async def _execute_archive(character_name: str, args: ArchiveArgs, messages: list[dict]):
-    """调用 character.summarizer.archive_recent_talk 做真正的归档。
+    """调用 experience.adapter.archive_recall.on_archive_topic 做真正的归档。
     调用者负责捕获并翻译异常；本函数不捕获、不修改任何状态。
     """
-    from character.summarizer import archive_recent_talk as _summarizer_archive
-    return await _summarizer_archive(
+    from experience.adapter.archive_recall import on_archive_topic
+    return await on_archive_topic(
         character_name=character_name, messages=messages,
         time_range_start=args.time_range_start,
         time_range_end=args.time_range_end,
@@ -210,7 +214,8 @@ def _compute_visible(messages: list[dict], character_name: str) -> list[dict]:
     manual_only=True：只看 archive_recent_talk 自己的覆盖，
     不被 auto_summarize 后台任务的覆盖段干扰（"扰乱测试"的根因）。
     """
-    from character.summarizer import _gaps_between_covered, load_compression_log
+    from experience.io import load_compression_log
+    from experience.adapter.archive_recall import _gaps_between_covered
     log = load_compression_log(character_name)
     gaps = _gaps_between_covered(len(messages), log, manual_only=True)
     visible: list[dict] = []
@@ -288,8 +293,9 @@ def recall_topic(arguments: dict) -> str:
     """
     from tool.builtin import _current_actor
     from character.history import History
-    from character.summarizer import (
-        build_topics_context, recall_topic_by_id, recall_topic_by_label, )
+    from experience.adapter.archive_recall import (
+        on_recall, build_topics_context,
+    )
 
     topic_label = arguments.get("topic_label", "")
     topic_id = arguments.get("topic_id", "")
@@ -302,19 +308,15 @@ def recall_topic(arguments: dict) -> str:
 
     if topic_id:
         try:
-            summary, block = recall_topic_by_id(_current_actor, topic_id)
-            from experience.adapter.archive_recall import on_recall
-            on_recall(_current_actor, summary.id, block)  # adapter 层保持调用方统一
+            summary, block = on_recall(_current_actor, topic_label="", topic_id=topic_id)
             return block
         except ValueError as e:
             return f"[Error] {e}"
 
     if topic_label:
         try:
-            summary, block = recall_topic_by_label(_current_actor, topic_label)
+            summary, block = on_recall(_current_actor, topic_label=topic_label, topic_id="")
             label = summary.topic_label or summary.topic or "未命名"
-            from experience.adapter.archive_recall import on_recall
-            on_recall(_current_actor, summary.id, block)  # adapter 层保持调用方统一
             return (
                 f"[话题回想] 找到「{label}」（ID: {summary.id}）\n"
                 f"将以下内容注入上下文：\n\n{block}"

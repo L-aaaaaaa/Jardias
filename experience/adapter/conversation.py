@@ -35,6 +35,10 @@ import re
 from datetime import datetime
 
 
+# 最多注入上下文多少条 L1 摘要，超出则用 L2 替代
+MAX_L1_IN_CONTEXT = 5
+
+
 # ═══════════════════════════════════════════════════════════════════
 # system 段渲染器
 # （原 yinao.system_block 迁入；该模块只构造字符串，不读写 experience.md，
@@ -394,6 +398,83 @@ def _render_single_message(msg: dict) -> list[str]:
     return [f"### [{ts}] {role}\n\n{fence}text\n{content}\n{fence}"]
 
 
+def build_l1_context(character_name: str, max_items: int = 3) -> str:
+    """构建 L1 摘要块，含 `## 摘要` 标题，输出单个 JSON 数组。"""
+    from experience.io import load_all_l1
+
+    summaries = load_all_l1(character_name)
+    if not summaries:
+        return ""
+    entries = []
+    for s in summaries[-max_items:]:
+        from experience.io.writer import _l1_ensure_summary
+        _l1_ensure_summary(s)
+        entries.append({
+            "id": s.id,
+            "start_time": s.start_time,
+            "end_time": s.end_time,
+            "message_count": s.message_count,
+            "user_turns": s.user_turns,
+            "summary": s.summary,
+        })
+    json_block = "```json\n" + json.dumps(entries, ensure_ascii=False, indent=2) + "\n```"
+    return "## 摘要\n" + json_block
+
+
+def select_summaries_for_context(
+        character_name: str, messages: list[dict], log: list[dict] | None = None) -> list:
+    """入口统一：给定角色名+完整历史+压缩记录，返回应注入上下文的摘要列表。
+
+    策略：
+    1. 收集所有 l1_id 指向的 L1 摘要
+    2. 按 abs_from 升序排列（时间顺序）
+    3. 若超过 MAX_L1_IN_CONTEXT，替换为 L2（逻辑在 L2 模块，这里先返回全量）
+    """
+    from experience.io import load_all_l1, load_compression_log
+
+    if log is None:
+        log = load_compression_log(character_name)
+    if not log:
+        return []
+
+    all_l1 = load_all_l1(character_name)
+    l1_by_id = {s.id: s for s in all_l1}
+
+    # 按 abs_from 升序，选出 log 中 l1_id 存在的 L1
+    log_sorted = sorted(log, key=lambda r: r["abs_from"])
+    selected = []
+    for rec in log_sorted:
+        l1_id = rec.get("l1_id")
+        if l1_id and l1_id in l1_by_id:
+            selected.append(l1_by_id[l1_id])
+
+    # 超过上限：暂时截断（后续 L2 替代逻辑在这里扩展）
+    if len(selected) > MAX_L1_IN_CONTEXT:
+        selected = selected[-MAX_L1_IN_CONTEXT:]
+
+    return selected
+
+
+def build_summary_block(selected) -> str:
+    """将选中的摘要渲染为 ## 摘要 区块。"""
+    if not selected:
+        return ""
+    entries = []
+    from experience.io.writer import _l1_ensure_summary
+    for s in selected:
+        _l1_ensure_summary(s)
+        entries.append({
+            "id": s.id,
+            "start_time": s.start_time,
+            "end_time": s.end_time,
+            "message_count": s.message_count,
+            "user_turns": s.user_turns,
+            "summary": s.summary,
+        })
+    json_block = "```json\n" + json.dumps(entries, ensure_ascii=False, indent=2) + "\n```"
+    return "## 摘要\n\n" + json_block
+
+
 def _render_messages_to_recent_section(messages: list[dict]) -> str:
     """将 messages 渲染为不含标题的对话条目（供 dump/replace 使用）。
 
@@ -551,7 +632,8 @@ def on_round_complete(character_name: str, new_messages: list[dict],
     """
     from experience.io.writer import write_block2_append, clear_block3
     from experience.io.reader import _CHARACTER_NAME_CACHE
-    from character.summarizer import load_compression_log, _covered_ranges
+    from experience.io import load_compression_log
+    from .archive_recall import _covered_ranges
 
     if not new_messages:
         return meta or {}
@@ -695,4 +777,7 @@ __all__ = [
     "_choose_fence", "_extract_pure_text", "_render_single_message",
     "_render_messages_to_recent_section",
     "build_context_from_experience",
+    # L1 / compression_log 的 context 渲染（业务层）
+    "build_l1_context", "build_summary_block", "select_summaries_for_context",
+    "MAX_L1_IN_CONTEXT",
 ]  # fmt: skip

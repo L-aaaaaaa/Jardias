@@ -8,7 +8,7 @@ import sys
 from datetime import datetime as _dt
 
 from character.config_io import load_config
-from character.summarizer import check_and_compress
+from experience.adapter.archive_recall import on_compress as _check_and_compress
 from common.actor_log import turn_open, model_switch as log_model_switch
 from common.logger import logger
 from common.cli_output import set_display_name, separator_to_terminal
@@ -218,7 +218,7 @@ async def _check_and_compress_safe(character_name: str, messages: list[dict]):
     """
     snapshot = list(messages)
     try:
-        await check_and_compress(character_name, snapshot)
+        await _check_and_compress(character_name, snapshot)
     except Exception as e:
         from common.logger import logger
         logger.warning(f"  [L1-bg] 后台压缩失败: {e}")

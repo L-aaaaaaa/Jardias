@@ -10,10 +10,16 @@
         重写块2（archive 用），summary_entries 是 dict 列表，自动序列化为 JSON
     - write_block3(character_name, user_input, timestamp)：写本次用户消息
     - clear_block3(character_name)：清空块3
+    - save_l1(character_name, summary)：保存 L1 摘要 JSON
+    - save_compression_log(character_name, records)：写压缩记录表（覆盖）
+    - append_compression_record(character_name, source, l1_id, abs_from, abs_to, ...)：
+        追加一条压缩记录，返回压缩事件 ID
 
 内部辅助：
     - _write_experience_file(path, blocks)：底层 4 块统一写入
     - _merge_or_append_summary(blocks, entry)：合并/追加摘要 JSON
+    - l1summary_to_dict(s)：L1Summary → dict（仅写入扩展字段，非空才写）
+    - l1summary_to_context_string(s)：L1Summary → markdown code block（IO 视图）
 """
 from __future__ import annotations
 
@@ -87,11 +93,15 @@ def _render_block3_user_input(user_input: str, timestamp: str) -> str:
 
 
 def _merge_or_append_summary(blocks: dict[int, str], summary_entry: dict) -> list[dict]:
-    """合并或追加一条 summary_entry 到 blocks[2] 的 ## 摘要 段。
+    """追加一条 summary_entry 到 blocks[2] 的 ## 摘要 段，并把更新后的 entries
+    就地写回 blocks[2]（仅替换 ```json ... ``` 块，保留其它内容）。
 
-    关键：如果新 summary 的 msg_indices 与现有任一条目重叠或相邻，
-    说明这是"扩展归档范围"而非"新话题"，应合并而不是追加。
-    返回合并后的 entries 列表（已写入 blocks[2]）。
+    关键设计：每条 summary 都有独立 ID，跨次归档互不合并。
+
+    历史 bug（已修）：早期版本会按 msg_indices 重叠判定"扩展归档"并合并，
+    但实际跨次手动归档的 ID 是独立的（如 T-083725、T-083730），重叠只意味着
+    "两个不同话题覆盖同一段历史"——例如「你好」[0,7] + 「笑话」[4,5]，
+    不应被合并成 1 条。合并会把前一条直接覆盖掉，造成信息丢失。
     """
     text2 = blocks[2] or ""
     m = re.search(r"```json\s*\n(.+?)\n```", text2, re.DOTALL)
@@ -100,35 +110,20 @@ def _merge_or_append_summary(blocks: dict[int, str], summary_entry: dict) -> lis
             arr = json.loads(m.group(1))
         except Exception:
             arr = []
+        before, after = text2[:m.start()], text2[m.end():]
     else:
         arr = []
+        before, after = text2, ""
 
-    new_from = summary_entry.get("msg_indices", [0, 0])[0]
-    new_to = summary_entry.get("msg_indices", [0, 0])[1]
-    merged = False
-    for i, ex in enumerate(arr):
-        ex_from = (ex.get("msg_indices") or [0, 0])[0]
-        ex_to = (ex.get("msg_indices") or [0, 0])[1]
-        # 检查重叠或相邻
-        if not (new_to < ex_from or new_from > ex_to):
-            # 重叠 → 合并，新条目为主
-            merged_from = min(new_from, ex_from)
-            merged_to = max(new_to, ex_to)
-            arr[i] = dict(summary_entry)
-            arr[i]["msg_indices"] = [merged_from, merged_to]
-            # 保留原 id（如果有）
-            if ex.get("id") and "id" not in summary_entry:
-                arr[i]["id"] = ex["id"]
-            # 扩展 detail 优先用新 detail，但如果新 detail 是 fallback，
-            # 且原 detail 是真 LLM 生成的，则保留原 detail
-            new_detail = summary_entry.get("detail", "")
-            old_detail = ex.get("detail", "")
-            if "归档时间" in new_detail and "归档时间" not in old_detail and len(old_detail) > len(new_detail):
-                arr[i]["detail"] = old_detail
-            merged = True
-            break
-    if not merged:
-        arr.append(summary_entry)
+    # 兜底：旧版 entries 不是 dict（早期可能是字符串）——全部清理为 dict
+    arr = [e for e in arr if isinstance(e, dict)]
+    arr.append(summary_entry)
+
+    # 按 msg_indices 起点升序排列（视觉上更稳定）
+    arr.sort(key=lambda e: (e.get("msg_indices") or [0, 0])[0])
+
+    new_json = "```json\n" + json.dumps(arr, ensure_ascii=False, indent=2) + "\n```"
+    blocks[2] = before + new_json + after
     return arr
 
 
@@ -156,6 +151,116 @@ def _resolve_path(character_name: str) -> Path:
     path = get_character_dir(character_name) / "experience.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
+
+
+# ═══════════════════════════════════════════════════════════════════
+# L1 摘要写入（summaries/L1/{id}.json）
+# ═══════════════════════════════════════════════════════════════════
+
+def l1summary_to_dict(s) -> dict:
+    """L1Summary → dict。扩展字段仅在非默认值时写入（保持向后兼容）。"""
+    _l1_ensure_summary(s)
+    d = {
+        "id": s.id,
+        "start_time": s.start_time,
+        "end_time": s.end_time,
+        "message_count": s.message_count,
+        "user_turns": s.user_turns,
+        "summary": s.summary,
+    }
+    if s.topic:
+        d["topic"] = s.topic
+    if s.detail:
+        d["detail"] = s.detail
+    if s.key_events:
+        d["key_events"] = list(s.key_events)
+    if s.topic_label:
+        d["topic_label"] = s.topic_label
+    if s.people:
+        d["people"] = s.people
+    if s.msg_indices != (0, 0):
+        d["msg_indices"] = list(s.msg_indices)
+    if s.source and s.source != "auto":
+        d["source"] = s.source
+    if s.time_ranges:
+        d["time_ranges"] = s.time_ranges
+    if s.range_msg_indices:
+        d["range_msg_indices"] = s.range_msg_indices
+    return d
+
+
+def _l1_ensure_summary(s):
+    """兜底：旧版 L1Summary 只有 topic/detail 时，构造一个 summary 段。"""
+    if not s.summary and s.topic:
+        s.summary = [{"from": 0, "to": s.user_turns,
+                      "topic": s.topic, "detail": s.detail}]
+
+
+def l1summary_to_context_string(s) -> str:
+    """L1Summary → markdown code block JSON（IO 视图）。"""
+    _l1_ensure_summary(s)
+    payload = {
+        "id": s.id, "start_time": s.start_time, "end_time": s.end_time,
+        "message_count": s.message_count, "user_turns": s.user_turns,
+        "summary": s.summary,
+    }
+    return "```json\n" + json.dumps(payload, ensure_ascii=False, indent=2) + "\n```"
+
+
+def save_l1(character_name: str, summary) -> Path:
+    """保存 L1 摘要到文件，返回写入路径。"""
+    from character import get_summaries_dir
+
+    l1_dir = get_summaries_dir(character_name)
+    l1_dir.mkdir(parents=True, exist_ok=True)
+    path = l1_dir / f"{summary.id}.json"
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(l1summary_to_dict(summary), f, ensure_ascii=False, indent=2)
+    return path
+
+
+# ═══════════════════════════════════════════════════════════════════
+# compression_log.json 写入（summaries/compression_log.json）
+# ═══════════════════════════════════════════════════════════════════
+
+def save_compression_log(character_name: str, records: list[dict]) -> None:
+    """直接写回压缩记录表（覆盖）。"""
+    from character import get_compression_log_path
+
+    path = get_compression_log_path(character_name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(records, f, ensure_ascii=False, indent=2)
+
+
+def append_compression_record(character_name: str,
+        source: str, l1_id: str,
+        abs_from: int, abs_to: int,
+        segment_index: int = 0, segment_count: int = 1) -> str:
+    """追加一条压缩记录，返回压缩事件 ID。
+
+    segment_index / segment_count 是聚合归档的扩展字段：
+    单段归档时省略（默认 0/1），多区间归档时每个区间写一条记录。
+    """
+    from datetime import datetime as _dt
+    from .reader import load_compression_log
+
+    records = load_compression_log(character_name)
+    cid = f"C-{_dt.now().strftime('%Y%m%d-%H%M%S')}"
+    record = {
+        "id": cid,
+        "source": source,
+        "l1_id": l1_id,
+        "abs_from": abs_from,
+        "abs_to": abs_to,
+        "compressed_at": _dt.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    if segment_count > 1:
+        record["segment_index"] = segment_index
+        record["segment_count"] = segment_count
+    records.append(record)
+    save_compression_log(character_name, records)
+    return cid
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -302,6 +407,10 @@ __all__ = [
     'write_block0', 'write_block1',
     'write_block2_append', 'write_block2_rewrite',
     'write_block3', 'clear_block3',
+    # L1 / compression_log IO
+    'save_l1', 'save_compression_log', 'append_compression_record',
+    # L1Summary 序列化（writer 视角）
+    'l1summary_to_dict', 'l1summary_to_context_string',
     # 内部 helper（dump_meta 操作需要从外部导入）
     '_write_experience_file',
     '_render_block2', '_render_block3_user_input',
