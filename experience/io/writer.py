@@ -28,8 +28,9 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from character import get_character_dir
-from .reader import read_all
+from character import get_character_dir, get_summaries_dir, get_compression_log_path
+from common.logger import logger
+from .reader import read_all, load_compression_log
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -209,8 +210,6 @@ def l1summary_to_context_string(s) -> str:
 
 def save_l1(character_name: str, summary) -> Path:
     """保存 L1 摘要到文件，返回写入路径。"""
-    from character import get_summaries_dir
-
     l1_dir = get_summaries_dir(character_name)
     l1_dir.mkdir(parents=True, exist_ok=True)
     path = l1_dir / f"{summary.id}.json"
@@ -225,8 +224,6 @@ def save_l1(character_name: str, summary) -> Path:
 
 def save_compression_log(character_name: str, records: list[dict]) -> None:
     """直接写回压缩记录表（覆盖）。"""
-    from character import get_compression_log_path
-
     path = get_compression_log_path(character_name)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
@@ -242,18 +239,15 @@ def append_compression_record(character_name: str,
     segment_index / segment_count 是聚合归档的扩展字段：
     单段归档时省略（默认 0/1），多区间归档时每个区间写一条记录。
     """
-    from datetime import datetime as _dt
-    from .reader import load_compression_log
-
     records = load_compression_log(character_name)
-    cid = f"C-{_dt.now().strftime('%Y%m%d-%H%M%S')}"
+    cid = f"C-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     record = {
         "id": cid,
         "source": source,
         "l1_id": l1_id,
         "abs_from": abs_from,
         "abs_to": abs_to,
-        "compressed_at": _dt.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "compressed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
     if segment_count > 1:
         record["segment_index"] = segment_index
@@ -337,14 +331,10 @@ def write_block2_append(character_name: str, recent_text: str,
     block2_size = len(blocks[2].encode("utf-8"))
     _BLOCK2_WARN_THRESHOLD = 50 * 1024  # 50KB
     if block2_size > _BLOCK2_WARN_THRESHOLD:
-        try:
-            from common.logger import logger
-            logger.warning(
-                f"  [exp] 块2 体积 {block2_size} bytes 超过阈值 "
-                f"{_BLOCK2_WARN_THRESHOLD}，建议归档早期对话"
-            )
-        except Exception:
-            pass  # logger 不可用时静默
+        logger.warning(
+            f"  [exp] 块2 体积 {block2_size} bytes 超过阈值 "
+            f"{_BLOCK2_WARN_THRESHOLD}，建议归档早期对话"
+        )
 
     return meta
 

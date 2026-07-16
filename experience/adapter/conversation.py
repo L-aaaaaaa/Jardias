@@ -29,11 +29,27 @@
 from __future__ import annotations
 
 import json
-import platform
 import os
+import platform
 import re
 from datetime import datetime
 
+from character import get_history_path
+from character.history import History
+from character.registry import registry
+from experience.adapter.state import on_state_update
+from experience.io import load_all_l1, load_compression_log
+from experience.io.reader import (
+    load_experience, _parse_user_input_from_message3, _CHARACTER_NAME_CACHE,
+)
+from experience.io.writer import (
+    _load_dump_meta, _save_dump_meta, _l1_ensure_summary,
+    write_block2_append, clear_block3, write_block3,
+)
+from tool.builtin import tools
+from yinao import IPU_REGISTRY, get_ipu_capabilities
+from yinao.weaver.icp_tracker import _usage_to_icp
+from .archive_recall import _covered_ranges
 
 # 最多注入上下文多少条 L1 摘要，超出则用 L2 替代
 MAX_L1_IN_CONTEXT = 5
@@ -47,7 +63,6 @@ MAX_L1_IN_CONTEXT = 5
 
 
 def _get_full_ipu_name(provider: str, short_name: str) -> str:
-    from yinao import IPU_REGISTRY
     try:
         return IPU_REGISTRY[provider][short_name]
     except KeyError:
@@ -68,8 +83,6 @@ def _caps_summary(caps: set[str]) -> str:
 
 
 def _get_tool_definitions() -> list[str]:
-    """延迟导入 tool.builtin.tools，避免循环依赖。"""
-    from tool.builtin import tools
     defs = tools.get_definitions()
     return [t["function"]["name"] for t in defs] if defs else []
 
@@ -80,7 +93,6 @@ def _build_character_context(current_character: str | None = None) -> str:
     关键修复 (P2):如果传入了 current_character,则从列表中排除自己,
     否则角色会在自己的 system prompt 中看到自己,造成冗余。
     """
-    from character.registry import registry
     chars = registry.scan()
     if not chars:
         return "暂无可用角色。你可以使用 create_character 工具创建新角色。"
@@ -100,7 +112,6 @@ def _build_character_context(current_character: str | None = None) -> str:
 
 
 def _build_shice_guide() -> str:
-    from tool.builtin import tools
     names = tools.list_names()
     if "shice_schedule_add" not in names:
         return ""
@@ -121,8 +132,6 @@ def _build_shice_guide() -> str:
 
 def build_config_context(config, character_name: str | None = None) -> str:
     """注入运行时引擎信息（IPU + ICP 视角）。"""
-    from yinao import IPU_REGISTRY, get_ipu_capabilities
-
     rt = config.runtime
     full_name = _get_full_ipu_name(rt.provider, rt.ipu)
     my_caps = _caps_summary(get_ipu_capabilities(rt.provider, rt.ipu))
@@ -190,10 +199,9 @@ def build_config_context(config, character_name: str | None = None) -> str:
 {_build_shice_guide()}
 图片策略: 收到图片但当前引擎无 vision → 通过 update_runtime 切到有 vision 的引擎。
 
-### 思考语言（重要）
-你的推理过程（reasoning/thinking）、内心独白、工具调用前的分析，一律使用中文。
-仅在以下情况可以使用英文：(1) 代码片段 (2) 技术术语无对应中文时 (3) 用户明确使用英文提问。
-注意：这不是建议，是硬性要求。使用英文思考视为违规。
+### 思考、回复语言
+你的回复、推理过程（reasoning/thinking）、内心独白、工具调用前的分析使用的语言，默认与名字语言匹配。
+注意：这不是建议，是硬性要求。
 
 ### 角色管理
 {_build_character_context(character_name)}
@@ -236,7 +244,6 @@ def build_system_message(config, character_name: str = "default",
     if switch_note:
         parts.insert(1, switch_note)
     return {"role": "system", "content": "\n\n".join(parts)}
-
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -400,14 +407,11 @@ def _render_single_message(msg: dict) -> list[str]:
 
 def build_l1_context(character_name: str, max_items: int = 3) -> str:
     """构建 L1 摘要块，含 `## 摘要` 标题，输出单个 JSON 数组。"""
-    from experience.io import load_all_l1
-
     summaries = load_all_l1(character_name)
     if not summaries:
         return ""
     entries = []
     for s in summaries[-max_items:]:
-        from experience.io.writer import _l1_ensure_summary
         _l1_ensure_summary(s)
         entries.append({
             "id": s.id,
@@ -430,8 +434,6 @@ def select_summaries_for_context(
     2. 按 abs_from 升序排列（时间顺序）
     3. 若超过 MAX_L1_IN_CONTEXT，替换为 L2（逻辑在 L2 模块，这里先返回全量）
     """
-    from experience.io import load_all_l1, load_compression_log
-
     if log is None:
         log = load_compression_log(character_name)
     if not log:
@@ -460,7 +462,6 @@ def build_summary_block(selected) -> str:
     if not selected:
         return ""
     entries = []
-    from experience.io.writer import _l1_ensure_summary
     for s in selected:
         _l1_ensure_summary(s)
         entries.append({
@@ -497,6 +498,7 @@ def _render_messages_to_recent_section(messages: list[dict]) -> str:
         if isinstance(ts, str) and len(ts) >= 19:
             return ts[:19]
         return "9999-99-99 99:99:99"
+
     dialogue_msgs = sorted(dialogue_msgs, key=_sort_key)
 
     rendered: list[str] = []
@@ -517,17 +519,16 @@ def on_user_input(character_name: str, user_input: str,
 
     等价于 update_experience("用户输入", {"user_input", "timestamp?"})
     """
-    from experience.io.writer import write_block3
     write_block3(character_name, user_input, timestamp)
 
 
 def build_context_from_experience(
-    config,
-    character_name: str,
-    user_input: str,
-    image_url: str | None = None,
-    switch_note: str | None = None,
-    round_context: str = "",
+        config,
+        character_name: str,
+        user_input: str,
+        image_url: str | None = None,
+        switch_note: str | None = None,
+        round_context: str = "",
 ) -> list[dict]:
     """从 experience.md 构建发送给模型的 messages。
 
@@ -538,8 +539,6 @@ def build_context_from_experience(
         - 处理 round_context 优先级（外部传入优先于块1）
         - 处理 image_url 多模态包装
     """
-    from experience.io.reader import load_experience, _parse_user_input_from_message3
-
     blocks = load_experience(character_name)
 
     # message0: 系统提示词
@@ -630,11 +629,6 @@ def on_round_complete(character_name: str, new_messages: list[dict],
         - user 消息剥离 markdown wrapper
         - 块2 没有双骨架时先创建空骨架
     """
-    from experience.io.writer import write_block2_append, clear_block3
-    from experience.io.reader import _CHARACTER_NAME_CACHE
-    from experience.io import load_compression_log
-    from .archive_recall import _covered_ranges
-
     if not new_messages:
         return meta or {}
 
@@ -721,12 +715,6 @@ def dump_experience(character_name: str,
         4. 若有新增对话消息，走 on_round_complete 写块2
         5. 落盘 _dump_meta.json（含更新后的 written_len）
     """
-    from character import get_history_path
-    from character.history import History
-    from experience.adapter.state import on_state_update
-    from experience.io.writer import _load_dump_meta, _save_dump_meta
-    from yinao.weaver.icp_tracker import _usage_to_icp
-
     # 始终从磁盘读取最新状态
     hp = str(get_history_path(character_name))
     hist = History(hp).load()

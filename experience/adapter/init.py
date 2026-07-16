@@ -11,6 +11,10 @@
 """
 from __future__ import annotations
 
+from experience.adapter.conversation import build_system_message
+from experience.io.writer import _write_experience_file, _resolve_path, write_block0
+from experience.io.reader import read_all
+
 
 _DEFAULT_BLOCK1 = "# 状态\n\n（暂无状态数据）"
 
@@ -27,14 +31,12 @@ def _flatten_content(content) -> str:
 
 def _render_block0(config, character_name: str) -> str:
     """渲染块0：复用 conversation.build_system_message（块0 == system 字符串）。"""
-    from experience.adapter.conversation import build_system_message
     system_msg = build_system_message(config, character_name)
     return _flatten_content(system_msg["content"])
 
 
 def _write_skeleton(character_name: str, block0: str) -> None:
     """写入空骨架（块0/1/2/3 各自独立，块2/3 留空）。"""
-    from experience.io.writer import _write_experience_file, _resolve_path
     _write_experience_file(_resolve_path(character_name), {
         0: block0,
         1: _DEFAULT_BLOCK1,
@@ -58,9 +60,6 @@ def on_ipu_switch(character_name: str, config) -> None:
     等价于旧的 experience.practice.sync_experience_system_block。
     如果 experience.md 还没创建（角色未初始化），跳过。
     """
-    from experience.io.reader import read_all
-    from experience.io.writer import write_block0
-
     try:
         blocks = read_all(character_name)
     except Exception:

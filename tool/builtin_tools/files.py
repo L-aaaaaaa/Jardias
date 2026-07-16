@@ -17,6 +17,8 @@ import subprocess
 import sys
 from datetime import datetime
 
+from tool.builtin import _format_error
+
 # Windows cmd 默认代码页 = OEM 代码页（中文系统上是 cp936/GBK），
 # Python subprocess 默认按 UTF-8 解码 stdout 会乱码。
 # 在命令前加 chcp 65001 强制 cmd 输出 UTF-8——跨地区一致的最稳方案。
@@ -91,8 +93,6 @@ def _sanitize_binary_line(line: str) -> str | None:
 
 
 def execute_command(arguments: dict) -> str:
-    from tool.builtin import _format_error
-
     command = arguments["command"]
     # Windows cmd 默认输出 OEM 代码页（cp936/cp437），用 UTF-8 解码会乱码。
     # 在命令前加 chcp 65001 强制 cmd 输出 UTF-8——跨地区一致的方案。
@@ -117,8 +117,6 @@ def execute_command(arguments: dict) -> str:
 
 
 async def read_file(path: str, line_range: str | None = None) -> str:
-    from tool.builtin import _format_error
-
     try:
         resolved = _resolve_path(path)
         if not resolved.exists(): return f"[Error] file not found: {path}"
@@ -150,8 +148,6 @@ async def read_file(path: str, line_range: str | None = None) -> str:
 
 
 async def write_file(path: str, content: str, mode: str = "w") -> str:
-    from tool.builtin import _format_error
-
     try:
         resolved = _resolve_path(path);
         resolved.parent.mkdir(parents=True, exist_ok=True)
@@ -194,8 +190,6 @@ async def get_directory_tree(
 
     超过 max_entries 时返回前 N 条并在末尾追加提示，便于模型缩小范围。
     """
-    from tool.builtin import _format_error
-
     try:
         resolved = _resolve_path(path)
         if not resolved.exists(): return f"[Error] dir not found: {path}"
@@ -259,12 +253,6 @@ async def get_directory_tree(
                 f"... and {skipped} more entries (use depth=N or smaller path)"
             )
         return "\n".join(lines) if len(lines) > 1 else "(empty)"
-
-        if truncated and skipped > 0:
-            lines.append(
-                f"... and {skipped} more entries (use depth=N or smaller path)"
-            )
-        return "\n".join(lines) if len(lines) > 1 else "(empty)"
     except PermissionError:
         return f"[Error] permission denied: {path}"
     except Exception as e:
@@ -272,8 +260,6 @@ async def get_directory_tree(
 
 
 async def search_in_path(pattern: str, path: str = ".") -> str:
-    from tool.builtin import _format_error
-
     try:
         base = _resolve_path(path)
         matches = sorted([str(p.relative_to(base)) for p in base.glob(pattern) if p.is_file()])
@@ -319,8 +305,6 @@ async def search_in_content(pattern: str, path: str = ".", case_insensitive: boo
 
 
 async def get_file_metadata(path: str) -> str:
-    from tool.builtin import _format_error
-
     try:
         resolved = _resolve_path(path)
         if not resolved.exists(): return f"[Error] not found: {path}"

@@ -6,14 +6,14 @@
 
 ## 1. 行为准则
 
-本项目采用 Contributor Covenant 2.1。参见 `meta/CODE_OF_CONDUCT.md`（待补）。
+本项目采用 Contributor Covenant 2.1。参见 `meta/CODE_OF_CONDUCT.md`。
 
 ## 2. 贡献者许可协议（CLA）
 
 **重要**：在提交第一个被合并的 PR 之前，你需要签署 CLA：
 
-- **个人贡献者**：Apache Individual CLA（ICLA）— 见 `meta/CLA-INDIVIDUAL.md`（待补）
-- **企业贡献者**：Apache Corporate CLA（CCLA）— 见 `meta/CLA-CORPORATE.md`（待补）
+- **个人贡献者**：Apache Individual CLA（ICLA）— 见 `meta/CLA-INDIVIDUAL.md`
+- **企业贡献者**：Apache Corporate CLA（CCLA）— 见 `meta/CLA-CORPORATE.md`
 
 签署流程：
 
@@ -91,4 +91,4 @@ scope 示例：`tool/builtin`、`schedule/shice`、`library/HEEL`
 
 - Issue 讨论：项目仓库的 GitHub Issues
 - 学术争议：开标 `[discussion]` 标签的 issue
-- 安全问题：私下联系作者，不要公开 issue（参见 `meta/SECURITY.md`，待补）
+- 安全问题：私下联系作者（参见 `meta/SECURITY.md`）

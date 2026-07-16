@@ -72,12 +72,24 @@ def separate_print(separator: str = "─", title: str = "", length: int = 50,
       - 思考/推理 → 自动黄字
       - 回复/工具调用 → 自动恢复默认
     """
+    from common.i18n import t, get_lang
+
     if _silent:
         return
     if end:
         set_stream_color(None)
         print(f"\n{' -' * (length // 2)}")
         return
+
+    # 标题映射（中英文）
+    title_map = {
+        "回复": t("reply"),
+        "工具调用": t("tool_call"),
+        "推理过程": t("reasoning"),
+        "思考": t("reasoning"),
+        "时策回复": t("reply"),
+    }
+    display_title = title_map.get(title, title)
 
     # 根据标题自动切换流式颜色
     if title in ("回复", "工具调用"):
@@ -87,11 +99,11 @@ def separate_print(separator: str = "─", title: str = "", length: int = 50,
 
     # ── 时策回复也加时间 ──
     if title in ("推理过程", "回复", "工具调用", "时策回复"):
-        t = _dt.now().strftime("%H:%M:%S")
-        title = f"{title} {t}"
+        t_str = _dt.now().strftime("%H:%M:%S")
+        display_title = f"{display_title} {t_str}"
 
     # 拼接标签
-    label = f"【{_display_name}】{title}" if _display_name else title
+    label = f"【{_display_name}】{display_title}" if _display_name else display_title
 
     if not label:
         print(f"\n{separator * length}")
@@ -157,22 +169,24 @@ def render_round(output: RoundOutput, *, silent: bool = False,
     - 推理段显示"推理过程"分隔线，正文段显示"回复"分隔线。
     - 只有当对应缓冲区非空时才输出分隔线，避免空段污染终端。
     """
+    from common.i18n import tr_reasoning, tr_reply
     if silent:
         return
     if output.reasoning:
         set_stream_color('yellow')
-        separate_print(title='推理过程')
+        separate_print(title=tr_reasoning())
         stream_print(output.reasoning)
     if output.content:
         if not is_tool_round:
-            separate_print(title='回复')
+            separate_print(title=tr_reply())
         stream_print(output.content)
 
 
 def emit_reasoning_header(silent: bool) -> None:
+    from common.i18n import tr_reasoning
     if not silent:
         set_stream_color('yellow')
-        separate_print(title='推理过程')
+        separate_print(title=tr_reasoning())
 
 
 def emit_reasoning(silent: bool, text: str) -> None:
@@ -181,8 +195,9 @@ def emit_reasoning(silent: bool, text: str) -> None:
 
 
 def emit_content_header(silent: bool, is_tool_round: bool) -> None:
+    from common.i18n import tr_reply
     if not silent and not is_tool_round:
-        separate_print(title='回复')
+        separate_print(title=tr_reply())
 
 
 def emit_content(silent: bool, is_tool_round: bool, text: str) -> None:

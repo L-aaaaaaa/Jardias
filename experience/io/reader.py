@@ -19,7 +19,8 @@ import json
 import re
 from pathlib import Path
 
-from character import get_character_dir
+from character import get_character_dir, get_summaries_dir, get_compression_log_path
+from data_shape import L1Summary
 
 
 _BLOCK_PATTERN = re.compile(
@@ -107,18 +108,16 @@ def _parse_user_input_from_message3(message3: str) -> dict | None:
     用户输入内容
     ```
     """
-    import re as _re
-
     if not message3:
         return None
-    ts_match = _re.search(r"###\s*\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})]\s*(\w+)", message3)
+    ts_match = re.search(r"###\s*\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})]\s*(\w+)", message3)
     if not ts_match:
         return None
     timestamp = ts_match.group(1)
     role = ts_match.group(2)
 
     # 提取 ```text ``` 块内容
-    text_match = _re.search(r"```text\s*\n(.*?)\n```", message3, _re.DOTALL)
+    text_match = re.search(r"```text\s*\n(.*?)\n```", message3, re.DOTALL)
     text = text_match.group(1).strip() if text_match else ""
 
     return {"timestamp": timestamp, "role": role, "text": text}
@@ -136,8 +135,6 @@ def _infer_character_name(blocks: dict[int, str]) -> str | None:
 
 def load_all_l1(character_name: str) -> list:
     """加载所有 L1 摘要（按 ID 排序）。"""
-    from character import get_summaries_dir
-
     l1_dir = get_summaries_dir(character_name)
     if not l1_dir.exists():
         return []
@@ -157,8 +154,6 @@ def load_all_l1(character_name: str) -> list:
 
 def load_compression_log(character_name: str) -> list[dict]:
     """读取压缩记录表，返回所有压缩事件列表（按时间顺序）。"""
-    from character import get_compression_log_path
-
     path = get_compression_log_path(character_name)
     if not path.exists():
         return []
@@ -175,8 +170,6 @@ def load_compression_log(character_name: str) -> list[dict]:
 
 def l1summary_from_dict(d: dict):
     """从 dict 还原 L1Summary。"""
-    from data_shape import L1Summary
-
     inst = L1Summary(
         id=d.get("id", ""),
         start_time=d.get("start_time", ""),

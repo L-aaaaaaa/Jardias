@@ -7,17 +7,30 @@ import re as _re_module
 import sys
 from datetime import datetime as _dt
 
-from character.config_io import load_config
-from experience.adapter.archive_recall import on_compress as _check_and_compress
-from common.actor_log import turn_open, model_switch as log_model_switch
+from character import get_history_path
+from character.config_io import load_config, save_config
+from character.history import History
+from character.registry import registry
+from common.actor_log import turn_open, model_switch as log_model_switch, turn_input, local_image_loaded
+from common.cli_output import set_display_name
 from common.logger import logger
-from common.cli_output import set_display_name, separator_to_terminal
-from tool.builtin import tools, clear_pending_switch
+from experience import dump_experience
+from experience.adapter.archive_recall import on_compress as _check_and_compress
+from experience.adapter.conversation import form_full_context
+from experience.adapter.init import on_ipu_switch
+from experience.adapter.state import build_round_context
+from media.image import detect_image_url, detect_local_image, local_image_to_data_url, auto_switch_for_vision
+from tool.builtin import tools, clear_pending_switch, set_actor, _scheduler
 from yinao import resolve_ipu
-from yinao.launcher import resolve_chat, sync_config_to_ipu, reload_after_switch, inform_ipu_switch
-from yinao.launcher import format_engine_switch_log, next_provider, pick_fallback_ipu, next_vision_provider
-from yinao.weaver import set_round_meta
-from yinao.weaver import update_cumulative
+from yinao.launcher import (
+    format_engine_switch_log, next_provider, pick_fallback_ipu, next_vision_provider,
+    resolve_chat, sync_config_to_ipu, reload_after_switch, inform_ipu_switch,
+    set_active_ipu,
+)
+from yinao.weaver import (
+    set_round_meta, update_cumulative, last_round,
+    record_ipu_success, is_exhausted_error, record_ipu_failure,
+)
 
 
 def extract_reply(messages: list[dict]) -> str:
@@ -47,7 +60,6 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
 
     while retry < 5:
         if messages is None:
-            from experience.adapter.conversation import form_full_context
             messages = form_full_context(ctx.config, ctx.history.messages, user_input,
                 image_url=image_url, switch_note=switch_note,
                 round_context=round_context, character_name=ctx.character_name)
@@ -112,7 +124,6 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
                     reason="LLM requested switch")
                 ctx.history.append_system(switch_log)
                 ctx.history.save()
-                from experience.adapter.init import on_ipu_switch
                 on_ipu_switch(ctx.character_name, ctx.config)
                 log_model_switch(old_prov, old_ipu, ctx.provider, ctx.ipu, reason="LLM requested switch")
                 if retry < 3:
@@ -123,12 +134,10 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
                     if switch_note:
                         messages.append({"role": "user", "content": switch_note})
                 continue
-            from yinao.weaver import record_ipu_success
             record_ipu_success(ctx.provider)
             return True, messages
         except Exception as e:
             logger.error(f"  [ERROR] 调用异常 | {ctx.provider}/{ctx.ipu} | {type(e).__name__}: {e}")
-            from yinao.weaver import is_exhausted_error, record_ipu_failure
             if is_exhausted_error(e):
                 record_ipu_failure(ctx.provider, e)
             need_vision = bool(image_url)
@@ -143,9 +152,6 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
                 ctx.chat_fn = resolve_chat(fallback)
                 _, ctx.ipu_config = resolve_ipu(fallback, fm)
                 sync_config_to_ipu(ctx.config, ctx.ipu_config)
-                from yinao.launcher import set_active_ipu
-                from character.config_io import save_config
-                from experience.adapter.init import on_ipu_switch
                 set_active_ipu(ctx.provider, ctx.ipu)
                 save_config(ctx.config, ctx.character_name, config_dir=ctx.config_dir)
                 on_ipu_switch(ctx.character_name, ctx.config)
@@ -170,8 +176,6 @@ async def _run_turn(ctx, user_input: str, image_url: str | None,
 
 
 def _collect_round_meta(round_ok: bool, ctx) -> str:
-    from yinao.weaver import last_round
-    from experience.adapter.state import build_round_context
     if round_ok:
         update_cumulative(last_round.usage, ctx.provider, last_round.api_time)
     # 传 character_name 让 build_round_context 从 _dump_meta.json 读累计（持久化）
@@ -194,15 +198,12 @@ def _post_round(ctx, user_input: str, messages: list[dict], round_ok: bool = Tru
 
 
 def _build_failure_reply(ctx, messages):
-    from yinao.weaver import last_round
     err = last_round.error if last_round.error else "未知错误"
     return f"[本轮对话失败] 引擎 {ctx.provider}/{ctx.ipu} 返回错误，且无可用备选供应商。错误: {err}。"
 
 
 async def _post_round_async(ctx, user_input, messages, round_ok=True, ts=None, round_context: str = ""):
     _post_round(ctx, user_input, messages, round_ok, ts=ts)
-    from experience import dump_experience
-    from yinao.weaver import last_round
     # 把本轮 usage 传给 dump_experience，累加到 _dump_meta.json（持久化）
     dump_experience(
         ctx.character_name, round_context=round_context or None,
@@ -220,14 +221,10 @@ async def _check_and_compress_safe(character_name: str, messages: list[dict]):
     try:
         await _check_and_compress(character_name, snapshot)
     except Exception as e:
-        from common.logger import logger
         logger.warning(f"  [L1-bg] 后台压缩失败: {e}")
 
 
 async def _do_switch_character(ctx, name: str):
-    from character import get_history_path
-    from character.history import History
-    from tool.builtin import set_actor
     ctx.history.save()
     ctx.character_name = name
     set_actor(name)
@@ -238,7 +235,6 @@ async def _do_switch_character(ctx, name: str):
     ctx.chat_fn = resolve_chat(ctx.provider)
     _, ctx.ipu_config = resolve_ipu(ctx.provider, ctx.ipu)
     sync_config_to_ipu(ctx.config, ctx.ipu_config)
-    from yinao.launcher import set_active_ipu
     set_active_ipu(ctx.provider, ctx.ipu)
     ctx.history = History(str(get_history_path(name))).load()
     ctx.turn_num = int(len(ctx.history.messages) / 2) + 1
@@ -251,7 +247,6 @@ async def _handle_directive(user_input: str, ctx):
         parts = stripped[2:].split(None, 1)
         target = parts[0] if parts else ""
         new_input = parts[1] if len(parts) > 1 else ""
-        from character.registry import registry
         if registry.exists(target):
             await _do_switch_character(ctx, target)
             return new_input or ""
@@ -481,9 +476,11 @@ async def conversation_loop(ctx, allow_switch: bool = False):
     _stdin_ready.set()  # 首次允许读取
 
     async def _stdin_reader():
+        """等待用户输入"""
+        from common.i18n import tr_user_input_prompt
         while True:
             await _stdin_ready.wait()
-            line = await asyncio.to_thread(input, "# 【用户输入】：")
+            line = await asyncio.to_thread(input, tr_user_input_prompt())
             _stdin_ready.clear()
             await stdin_queue.put(line)
 
@@ -492,8 +489,7 @@ async def conversation_loop(ctx, allow_switch: bool = False):
         while True:
             triggers = _get_pending_triggers(ctx)
             if triggers:
-                # 处理当前快照批次
-                await _process_triggers(ctx, triggers)
+                await _process_triggers(ctx, triggers)  # 处理当前快照批次
                 continue
 
             try:
@@ -503,11 +499,9 @@ async def conversation_loop(ctx, allow_switch: bool = False):
 
             t_now = _dt.now().strftime("%H:%M:%S")
             print(f"（发送时间：{t_now}）")
-            from common.actor_log import turn_input
             turn_input(user_words)
 
-            if not user_words.strip():
-                continue
+            if not user_words.strip(): continue
 
             if user_words.strip().lower() in ("exit", "quit", "q"):
                 ctx.history.save()
@@ -518,56 +512,45 @@ async def conversation_loop(ctx, allow_switch: bool = False):
 
             routed = await _handle_directive(user_words, ctx)
             if routed is not None:
-                if routed == "":
-                    continue
+                if routed == "": continue
                 user_words = routed
 
             turn_open(ctx.turn_num, ctx.config.runtime.provider, ctx.config.runtime.ipu, ctx.ipu_config.ipu,
                 runtime=ctx.config.runtime, tool_defs=tools.get_definitions())
 
-            from media.image import detect_image_url, detect_local_image, local_image_to_data_url, \
-                auto_switch_for_vision
             image_url = detect_image_url(user_words)
             if not image_url:
                 local_path = detect_local_image(user_words)
                 if local_path:
                     image_url = local_image_to_data_url(local_path)
                     if image_url:
-                        from common.actor_log import local_image_loaded
                         local_image_loaded(os.path.basename(local_path), os.path.getsize(local_path) // 1024)
 
             switch_note = None
             if image_url:
                 old_prov, old_ipu = ctx.config.runtime.provider, ctx.config.runtime.ipu
                 if auto_switch_for_vision(ctx, image_url):
-                    switch_note = inform_ipu_switch(old_prov, old_ipu, ctx.config.runtime.provider,
-                        ctx.config.runtime.ipu,
+                    switch_note = inform_ipu_switch(
+                        old_prov, old_ipu, ctx.config.runtime.provider, ctx.config.runtime.ipu,
                         old_full=ctx.ipu_config.ipu, new_full=ctx.ipu_config.ipu,
                         reason="auto-switch for image understanding")
 
             turn_ts = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
             round_ok, messages = await _run_turn(ctx, user_words, image_url, switch_note, round_context)
             round_context = _collect_round_meta(round_ok, ctx)
-            # 关键修复（提示符延迟）：把 _stdin_ready.set() 提前到 _run_turn
-            # 完成之后立刻执行,而不是等到 _post_round_async 走完。
-            # 这样在 dump_experience / check_and_compress / 磁盘落盘等
-            # 可能消耗数秒的期间,用户已经能看到 # 【用户输入】： 提示符,
-            # 可以放心输入。_post_round_async 完成后 main loop 会顺次
-            # 走完剩余步骤(_stdin_ready 已经 set,二次 set() 是 noop)。
             _stdin_ready.set()
-            await _post_round_async(ctx, user_words, messages, round_ok, ts=turn_ts, round_context=round_context)
+            await _post_round_async(ctx, user_words, messages, round_ok,
+                ts=turn_ts, round_context=round_context)
             _stdin_ready.set()
 
             next_character = clear_pending_switch()
-            if next_character:
-                await _do_switch_character(ctx, next_character)
+            if next_character: await _do_switch_character(ctx, next_character)
     finally:
         reader_task.cancel()
         try:
             await reader_task
         except asyncio.CancelledError:
             pass
-        from tool.builtin import _scheduler
         if _scheduler:
             _scheduler.stop()
 
@@ -576,17 +559,17 @@ async def interactive_loop():
     from common.bootstrap import bootstrap
     from common.cli_output import separator_to_terminal
     from character.character_menu import select_or_create_character
+    from common.i18n import tr_current_role, tr_quit_switch_hint, get_lang, toggle_lang
     while True:
         result = select_or_create_character()
         if result is None:
-            print("退出。")
+            print("退出。" if get_lang() == "zh" else "Goodbye.")
             return
         char_name, provider, ipu = result
         set_display_name(char_name)
         ctx = bootstrap(provider, ipu, character_name=char_name)
         separator_to_terminal("=", 30)
-        print(f"当前角色: {char_name} | 引擎: {ctx.provider}/{ctx.ipu}")
-        print("输入 'quit' 退出，输入 'switch' 切换角色\n")
+        print(tr_current_role(char_name, ctx.provider, ctx.ipu))
+        print(tr_quit_switch_hint() + "\n")
         signal = await conversation_loop(ctx, allow_switch=True)
-        if signal != "switch":
-            return
+        if signal != "switch": return

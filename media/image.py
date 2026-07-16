@@ -4,8 +4,12 @@ import mimetypes
 import os
 import re as _re_module
 
+from character.config_io import save_config
+from common.actor_log import model_switch as log_model_switch
 from common.logger import logger
+from experience.adapter.init import on_ipu_switch
 from yinao import IPU_REGISTRY, get_ipu_capabilities
+from yinao.launcher import reload_after_switch, format_engine_switch_log
 
 _IMG_EXTS = r"\.(?:png|jpg|jpeg|webp|gif|bmp)"
 _IMG_EXT_END = r"(?:\?[^\s]*)?(?:\s|$)"
@@ -71,9 +75,6 @@ def auto_switch_for_vision(ctx, image_url: str) -> bool:
         logger.warning("No vision-capable IPU available")
         return False
 
-    from character.config_io import save_config
-    from common.actor_log import model_switch as log_model_switch
-
     t_prov, t_ipu = target
     old_prov, old_ipu = ctx.config.runtime.provider, ctx.config.runtime.ipu
     old_full = ctx.ipu_config.ipu
@@ -81,9 +82,7 @@ def auto_switch_for_vision(ctx, image_url: str) -> bool:
     ctx.config.runtime.provider = t_prov
     ctx.config.runtime.ipu = t_ipu
     save_config(ctx.config, ctx.character_name, config_dir=ctx.config_dir)
-    from experience.adapter.init import on_ipu_switch
     on_ipu_switch(ctx.character_name, ctx.config)
-    from yinao.launcher import reload_after_switch, format_engine_switch_log
     reload_after_switch(ctx)
     new_full = ctx.ipu_config.ipu
     switch_log = format_engine_switch_log(

@@ -54,7 +54,8 @@ def turn_open(turn_num: int, provider: str, ipu_short: str, ipu_full: str,
 
 
 def turn_input(text: str):
-    logger.info(f"  【用户输入】：{text}")
+    from common.i18n import t
+    logger.info(f"  {t('user_input')}{text}")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -97,39 +98,38 @@ def max_rounds_reached(max_iter: int) -> None:
 
 def format_api_ok(elapsed: float, usage: dict | None = None,
         finish_reason: str | None = None) -> str:
-    """合并 API 耗时 + ICP 用量 + 截断警告为一行中文日志"""
+    """合并 API 耗时 + ICP 用量 + 截断警告为一行日志"""
+    from common.i18n import t
     parts = [f"API OK · {elapsed:.1f}s"]
 
     if usage:
         tokens = []
         if usage.get("prompt_tokens"):
-            tokens.append(f"输入 {usage['prompt_tokens']} 智点")
+            tokens.append(t("input_tokens", n=usage['prompt_tokens']))
         details = usage.get("completion_tokens_details", {}) or {}
         reason_tok = details.get("reasoning_tokens", 0)
         comp_tok = usage.get("completion_tokens", 0)
         if reason_tok:
-            tokens.append(f"思考 {reason_tok} 智点")
+            tokens.append(t("reasoning_tokens", n=reason_tok))
             output_only = comp_tok - reason_tok
-            tokens.append(f"输出 {output_only} 智点")
+            tokens.append(t("output_tokens", n=output_only))
         elif comp_tok:
-            tokens.append(f"输出 {comp_tok} 智点")
+            tokens.append(t("output_tokens", n=comp_tok))
         if usage.get("total_tokens"):
-            tokens.append(f"合计 {usage['total_tokens']} 智点")
+            tokens.append(t("total_tokens", n=usage['total_tokens']))
         if tokens:
             parts.append(" · ".join(tokens))
 
     if finish_reason == "length":
-        parts.append("[WARN] 输出被截断(长度限制)")
+        parts.append("[WARN] Output truncated (length limit)")
 
     return " · ".join(parts)
 
 
 def format_round_usage(usage: dict | None) -> str:
-    """把本轮 usage 格式化成中文自然句（用户视角，套入智点计数）。
-
-    例：'本轮输入 4698 智点，输出 17 智点的思考，9 智点的回答，合计 4724 智点'
-    """
+    """把本轮 usage 格式化成自然句（用户视角，套入智点计数）。"""
     from common.cli_output import get_silent
+    from common.i18n import t, get_lang
     if get_silent() or not usage:
         return ""
     prompt = usage.get("prompt_tokens", 0)
@@ -138,15 +138,16 @@ def format_round_usage(usage: dict | None) -> str:
     reason_tok = details.get("reasoning_tokens", 0)
     comp_tok = usage.get("completion_tokens", 0)
 
-    parts = [f"本轮输入 {prompt} 智点"]
+    parts = [t("this_turn_input", n=prompt)]
     if reason_tok and comp_tok:
         reply_tok = comp_tok - reason_tok
-        parts.append(f"输出 {reason_tok} 智点的思考，{reply_tok} 智点的回答")
+        parts.append(f"{t('this_turn_reasoning', n=reason_tok)}，{t('this_turn_reply', n=reply_tok)}")
     elif comp_tok:
-        parts.append(f"输出 {comp_tok} 智点的回答")
+        parts.append(t("this_turn_reply", n=comp_tok))
     if total:
-        parts.append(f"合计 {total} 智点")
-    return "，".join(parts) + "。"
+        parts.append(t("this_turn_total", n=total))
+    sep = "，" if get_lang() == "zh" else ", "
+    return sep.join(parts) + t("period")
 
 
 # ══════════════════════════════════════════════════════════════

@@ -11,19 +11,25 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 
+from character import get_history_path
+from character.history import History
+from common.logger import logger
+from data_shape import L1Summary
+from experience.adapter.archive_recall import (
+    _analyze_slice, _describe_slice, _guess_topic,
+    on_archive, on_archive_topic, on_recall, build_topics_context,
+    _gaps_between_covered,
+)
+from experience.io import (
+    save_l1, append_compression_record, l1summary_to_context_string,
+    load_compression_log,
+)
+
 
 def summarize_conversation(arguments: dict) -> str:
     """角色主动压缩早期对话历史。"""
     from tool.builtin import _current_actor
-    from character import get_history_path
-    from data_shape import L1Summary
-    from experience.io import (
-        save_l1, append_compression_record, l1summary_to_context_string,
-    )
-    from experience.adapter.archive_recall import (
-        _analyze_slice, _describe_slice, _guess_topic,
-    )
-    from common.logger import logger
+
     keep_recent_turns = int(arguments.get("keep_recent_turns", 6))
     topic_hint = arguments.get("topic", "")
     history_path = get_history_path(_current_actor)
@@ -67,6 +73,7 @@ async def archive_recent_talk(arguments: dict) -> str:
     用户指令如「转为摘要」「归档这个话题」时调用。
     """
     from tool.builtin import _current_actor, _format_error
+
     args = _parse_archive_args(arguments)  # 纯函数
     messages = _load_messages(_current_actor)  # 只加载原始数据
     if messages is None: return "[Error] 无历史记录"
@@ -149,7 +156,6 @@ def _parse_time_ranges(raw) -> list[list[str]]:
 
 def _load_messages(character_name: str) -> list[dict] | None:
     """加载 history.json 全部消息；文件不存在返回 None。"""
-    from character import get_history_path
     history_path = get_history_path(character_name)
     if not history_path.exists(): return None
     with open(history_path, "r", encoding="utf-8") as f: return json.load(f)
@@ -198,7 +204,6 @@ async def _execute_archive(character_name: str, args: ArchiveArgs, messages: lis
     """调用 experience.adapter.archive_recall.on_archive_topic 做真正的归档。
     调用者负责捕获并翻译异常；本函数不捕获、不修改任何状态。
     """
-    from experience.adapter.archive_recall import on_archive_topic
     return await on_archive_topic(
         character_name=character_name, messages=messages,
         time_range_start=args.time_range_start,
@@ -214,8 +219,6 @@ def _compute_visible(messages: list[dict], character_name: str) -> list[dict]:
     manual_only=True：只看 archive_recent_talk 自己的覆盖，
     不被 auto_summarize 后台任务的覆盖段干扰（"扰乱测试"的根因）。
     """
-    from experience.io import load_compression_log
-    from experience.adapter.archive_recall import _gaps_between_covered
     log = load_compression_log(character_name)
     gaps = _gaps_between_covered(len(messages), log, manual_only=True)
     visible: list[dict] = []
@@ -261,7 +264,6 @@ def _persist_experience(character_name, entry, visible_msgs, messages,
     physical_total = history.json 当前真实长度，让 archive 写完 written_len 后，
     下次 dump_experience 不会把已渲染的工具调用重复追加。
     """
-    from experience.adapter.archive_recall import on_archive
     on_archive(
         character_name,
         messages=[{"role": "system"}] * 3 + visible_msgs,
@@ -292,10 +294,6 @@ def recall_topic(arguments: dict) -> str:
     返回续谈注入块，直接追加到上下文底部。
     """
     from tool.builtin import _current_actor
-    from character.history import History
-    from experience.adapter.archive_recall import (
-        on_recall, build_topics_context,
-    )
 
     topic_label = arguments.get("topic_label", "")
     topic_id = arguments.get("topic_id", "")

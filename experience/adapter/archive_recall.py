@@ -32,6 +32,13 @@ import json
 import re
 from datetime import datetime
 
+from common.logger import logger
+from data_shape import L1Summary
+from experience.io import load_all_l1, save_l1, append_compression_record
+from experience.io import load_compression_log as _load_compression_log_io
+from experience.io.writer import write_block2_rewrite
+from tool.actor_tool import _summarize_conversation, _summarize_topic
+
 
 # ═══════════════════════════════════════════════════════════════════
 # 阈值 / 业务常量
@@ -275,8 +282,6 @@ def _build_topic_text(messages: list[dict], max_chars: int = 10000,
 
 def build_l1(character_name: str, messages: list[dict]):
     """对当前历史中「超出保留窗口」的部分构建一条 L1 摘要（机械归总）。"""
-    from data_shape import L1Summary
-
     total_chars = sum(len(m.get("content", "")) for m in messages)
     if total_chars < L1_CHAR_THRESHOLD:
         return None
@@ -312,9 +317,6 @@ def build_l1(character_name: str, messages: list[dict]):
 
 async def build_l1_llm(character_name: str, messages: list[dict]):
     """使用旁路小模型构建 L1 摘要（语义分段）——增量式，只摘要上次未覆盖的新轮次。"""
-    from data_shape import L1Summary
-    from experience.io import load_all_l1
-
     total_chars = sum(len(m.get("content", "")) for m in messages)
     if total_chars < L1_CHAR_THRESHOLD:
         return None
@@ -366,7 +368,6 @@ async def build_l1_llm(character_name: str, messages: list[dict]):
         if not summary_entries:
             raise ValueError("LLM returned no valid segments")
     except Exception as e:
-        from common.logger import logger
         logger.warning(f"  [WARN] L1 LLM summary failed ({e}), skip compression")
         return None
 
@@ -392,9 +393,6 @@ async def on_compress(character_name: str, messages: list[dict]):
 
     替换 character.summarizer.check_and_compress。
     """
-    from common.logger import logger
-    from experience.io import save_l1, append_compression_record
-
     summary = await build_l1_llm(character_name, messages)
     if summary is None:
         return None
@@ -435,10 +433,6 @@ async def on_archive_topic(character_name: str, messages: list[dict],
       多区间一次性合并为同一条 L1、共享同一个 id；compression_log 每区间一条记录。
     - 话题标签模式：只传 topic_label，工具自动在未归档 user 中匹配。
     """
-    from data_shape import L1Summary
-    from common.logger import logger
-    from experience.io import save_l1, append_compression_record
-
     if people is None:
         people = []
 
@@ -706,7 +700,6 @@ def on_archive(character_name: str, messages: list[dict],
 
     返回：更新后的 _dump_meta 字典
     """
-    from experience.io.writer import write_block2_rewrite
     from .conversation import _render_messages_to_recent_section
 
     dialogue_msgs = visible_msgs
@@ -729,8 +722,6 @@ def on_archive(character_name: str, messages: list[dict],
 
 def build_topics_context(character_name: str, max_items: int = 20) -> str:
     """构建所有已归档话题的概览（供 list_all=true 用）。"""
-    from experience.io import load_all_l1
-
     summaries = load_all_l1(character_name)
     manual_topics = [s for s in summaries if s.source == "manual"]
     auto_topics = [s for s in summaries if s.source == "auto"]
@@ -775,8 +766,6 @@ def on_recall(character_name: str, topic_label: str = "",
         - 匹配成功：(L1Summary, 续谈注入块字符串)
         - 匹配失败：抛 ValueError
     """
-    from experience.io import load_all_l1
-
     if list_all:
         return build_topics_context(character_name)
 
@@ -837,7 +826,7 @@ def _build_recall_block(character_name: str, s) -> str:
     """
     from character import get_history_path
     from character.history import History
-    from experience.adapter.conversation import _render_single_message
+    from .conversation import _render_single_message
 
     # 优先用 range_msg_indices（聚合归档存了每个区间的索引）；
     # 兼容性回退：单段归档只有 msg_indices；再回退：用 summary 最后一段的 from/to。
@@ -895,9 +884,6 @@ def _append_compression_after_save(character_name: str, summary, source: str):
     但用 source 区分。_gaps_between_covered / _covered_ranges 只过滤 source=="archive_recent_talk"
     的记录，避免 auto L1 的覆盖段"扰乱" archive 的精确归档判定。
     """
-    from common.logger import logger
-    from experience.io import append_compression_record
-
     if summary.msg_indices == (0, 0):
         return
     append_compression_record(
@@ -914,8 +900,7 @@ def _append_compression_after_save(character_name: str, summary, source: str):
 
 def load_compression_log(character_name: str) -> list[dict]:
     """读取压缩记录表（适配层委托 IO 层）。"""
-    from experience.io import load_compression_log as _io_load
-    return _io_load(character_name)
+    return _load_compression_log_io(character_name)
 
 
 __all__ = [

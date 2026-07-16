@@ -1,19 +1,31 @@
 """bootstrap — 会话初始化引导。"""
+import asyncio
 import json
 import os
+import re
+import shutil
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 
 from character import get_history_path, ensure_dirs
 from character.config_io import init_config, load_config, save_config
 from character.history import History
+from character.registry import registry
 from common.actor_log import bootstrap_summary
 from common.logger import logger
-from data_shape import ActorConfig
-from tool.builtin import set_actor, tools
+from data_shape import ActorConfig, IPUProvider
+from schedule import TemporalScheduler
+from tool.actor_tool import set_actor_executor
+from tool.builtin import set_actor, tools, set_scheduler as set_tool_scheduler
 from yinao import resolve_ipu
-from yinao.launcher import resolve_chat, sync_config_to_ipu
-from yinao.launcher.reply_getter import get_ipu_reply
+from yinao.launcher import (
+    resolve_chat, sync_config_to_ipu, set_active_ipu,
+    next_provider, pick_fallback_ipu,
+    form_client, get_ipu_reply,
+)
+from yinao.launcher.ipu_config_manager import ipu_config_manager
+from yinao.weaver import is_exhausted_error, record_ipu_failure
 
 
 def _default_system_prompt() -> str:
@@ -25,12 +37,6 @@ def _default_system_prompt() -> str:
 
 def _setup_actor_executor(ctx):
     """创建并注入 @actor_tool 旁路小模型执行器（支持跨 provider 模型路由）。"""
-    from tool.actor_tool import set_actor_executor
-    from yinao.launcher.reply_getter import form_client
-    from yinao.launcher.ipu_config_manager import ipu_config_manager
-    from yinao.launcher import next_provider, pick_fallback_ipu
-    from data_shape import IPUProvider
-
     _provider_clients: dict[str, object] = {}
     _ipu_to_provider: dict[str, str] = {}
     _ipu_to_id: dict[str, str] = {}
@@ -75,13 +81,10 @@ def _setup_actor_executor(ctx):
                 if idx != -1:
                     text = text[idx:]
                     break
-            import re
             text = re.sub(r',\s*([}\]])', r'\1', text)
             return text.strip()
 
         def _repair_json(text: str) -> str:
-            import re
-
             # 1. 去除 markdown code fence
             text = re.sub(r'^```(?:json)?\s*', '', text, flags=re.MULTILINE)
             text = re.sub(r'\s*```$', '', text)
@@ -163,7 +166,6 @@ def _setup_actor_executor(ctx):
                 return result
             except Exception as e:
                 last_error = e
-                from yinao.weaver import is_exhausted_error, record_ipu_failure
                 try:
                     if is_exhausted_error(e):
                         record_ipu_failure(fb_provider, e)
@@ -183,11 +185,6 @@ def _setup_actor_executor(ctx):
 
 def _setup_scheduler(ctx):
     """创建 TemporalScheduler 并注入 on_job_fire 回调。"""
-    import asyncio
-    import os
-    from schedule import TemporalScheduler
-    from tool.builtin import set_scheduler as _set_tool_scheduler
-
     store_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         "schedule")
     os.makedirs(store_dir, exist_ok=True)
@@ -202,18 +199,15 @@ def _setup_scheduler(ctx):
         logger.info(f"[时策] 触发完成 | {fire_ctx.character_id} | {trigger_msg[:50]}...")
 
     scheduler = TemporalScheduler(store_path, on_job_fire=on_job_fire)
-    _set_tool_scheduler(scheduler)
+    set_tool_scheduler(scheduler)
     asyncio.ensure_future(scheduler.start())
     logger.info(f"  [时策] 调度器已启动 | 存储: {store_path}")
 
 
 def bootstrap(provider: str, ipu: str, character_name: str = "default"):
-    from dataclasses import dataclass
-
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     # 检查角色是否存在
-    from character.registry import registry
     if not registry.exists(character_name) and character_name != "default":
         print(f"[Error] 角色 '{character_name}' 不存在。可用角色: {', '.join(registry.scan())}")
         sys.exit(1)
@@ -224,7 +218,6 @@ def bootstrap(provider: str, ipu: str, character_name: str = "default"):
 
     legacy_history = os.path.join(base_dir, "history.json")
     if os.path.exists(legacy_history) and not os.path.exists(history_path):
-        import shutil
         shutil.copy2(legacy_history, history_path)
         logger.info(f"  📁 历史迁移 | {legacy_history} → {history_path}")
 
@@ -288,7 +281,6 @@ def bootstrap(provider: str, ipu: str, character_name: str = "default"):
     )
     sync_config_to_ipu(ctx.config, ctx.ipu_config)
 
-    from yinao.launcher import set_active_ipu
     set_active_ipu(provider, ipu)
 
     tool_defs = tools.get_definitions()

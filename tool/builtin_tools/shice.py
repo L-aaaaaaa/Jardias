@@ -7,11 +7,19 @@ from __future__ import annotations
 
 import time
 
+from schedule.strategies import wall_ms
+from tool.builtin import _current_actor
+
+
+def _get_scheduler():
+    """延迟获取 scheduler 实例（避免模块导入时拿到 None 引用）。"""
+    from tool.builtin import _scheduler
+    return _scheduler
+
 
 def schedule_add(arguments: dict) -> str:
     """时策工具：LLM 传入绝对时间戳列表，注册定时任务。"""
-    from tool.builtin import _current_actor, _scheduler
-    from schedule.strategies import wall_ms
+    _scheduler = _get_scheduler()
     if _scheduler is None: return "[Error] 时策调度器未初始化"
     timestamps = arguments.get("timestamps", [])
     message = arguments.get("message", "")
@@ -33,7 +41,7 @@ def schedule_add(arguments: dict) -> str:
 
 def schedule_list() -> str:
     """列出所有活跃的时策任务。"""
-    from tool.builtin import _scheduler
+    _scheduler = _get_scheduler()
     if _scheduler is None: return "[OK] 时策调度器未初始化，无活跃任务"
     jobs = _scheduler.list_jobs()
     if not jobs: return "[OK] 无活跃的时策任务"
@@ -44,7 +52,7 @@ def schedule_list() -> str:
 
 def schedule_cancel(arguments: dict) -> str:
     """取消时策任务。"""
-    from tool.builtin import _scheduler
+    _scheduler = _get_scheduler()
     if _scheduler is None: return "[Error] 时策调度器未初始化"
     job_id = arguments.get("job_id", "")
     if not job_id: return "[Error] 需要 job_id 参数（可通过 shice_schedule_list 获取）"

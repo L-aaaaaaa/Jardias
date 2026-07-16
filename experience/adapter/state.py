@@ -14,6 +14,13 @@
 """
 from __future__ import annotations
 
+from experience.io.writer import write_block1, read_all
+from yinao.weaver.icp_tracker import (
+    cumulative_usage, provider_latency,
+    _usage_to_icp, _load_cumulative,
+)
+from yinao.weaver.round_state import last_round
+
 
 def build_round_context(character_name: str | None = None) -> str:
     """从 RoundMeta + 累计数据构建块1 字符串（ICP 视角）。
@@ -21,13 +28,6 @@ def build_round_context(character_name: str | None = None) -> str:
     累计数据优先从 _dump_meta.json 读取（持久化，跨重启累计），
     未传 character_name 时退回到进程内 cumulative_usage（向后兼容）。
     """
-    from yinao.weaver.icp_tracker import (
-        cumulative_usage, provider_latency,
-        _usage_to_icp, _load_cumulative,
-    )
-    # last_round / set_round_meta 已迁到 yinao.weaver.round_state（weaver 运行时全局）
-    from yinao.weaver.round_state import last_round
-
     parts: list[str] = ["# 状态"]
 
     # 1. ICP 用量（用户视角自然句，与终端本轮消耗同款措辞）
@@ -92,8 +92,6 @@ def on_state_update(character_name: str, round_context: str) -> None:
         - 如果 round_context 为空或等于占位符 "# 状态"，跳过（不污染块1）
         - 如果块1 内容已经是 round_context，跳过（避免无意义写）
     """
-    from experience.io.writer import write_block1, read_all
-
     if not round_context or round_context.strip() == "# 状态":
         return
 

@@ -13,7 +13,10 @@ icp_tracker.py — 智点（ICP）累计 + 各供应商延迟。
 """
 from __future__ import annotations
 
+import json
 from collections import deque
+
+from character import get_character_dir
 
 
 # 进程内 ICP 累计字典（重启清零；持久化版在 _dump_meta.json）。
@@ -55,11 +58,9 @@ def _usage_to_icp(usage: dict) -> dict:
 def _load_cumulative(character_name: str) -> dict:
     """从 _dump_meta.json 读取持久化的累计用量。异常返回零字典。"""
     try:
-        from character import get_character_dir
         meta_path = get_character_dir(character_name) / "_dump_meta.json"
         if not meta_path.exists():
             return {"prompt_icp": 0, "completion_icp": 0, "total_icp": 0, "thinking_icp": 0}
-        import json
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         return {
             "prompt_icp": meta.get("prompt_icp", 0),
