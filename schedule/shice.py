@@ -41,6 +41,7 @@ class JobFireContext:
         message: str,
         late_sec: float,
         skipped_indices: list[int] | None = None,
+        batch_size: int = 1,
     ):
         self.job_id = job_id
         self.fire_index = fire_index
@@ -49,10 +50,11 @@ class JobFireContext:
         self.message = message
         self.late_sec = late_sec  # 延迟秒数（0 = 准时）
         self.skipped_indices = skipped_indices or []
+        self.batch_size = max(1, batch_size)  # 本次合并触发的个数（含 fire_index）
 
     @property
     def remaining_count(self) -> int:
-        return len(self.timestamps) - self.fire_index - 1
+        return len(self.timestamps) - self.fire_index - self.batch_size
 
     def format_trigger(self) -> str:
         """格式化 system_trigger 消息（稳定结构前缀，供 LLM 感知）。
@@ -338,25 +340,32 @@ class TemporalScheduler:
         self._rearm_timer()
 
     async def _fire(self, schedule: Schedule) -> None:
+        """触发 schedule 单点。
+
+        missed 由 _advance_after_batch 在检测"阻塞挤掉链"时写入 schedule.state，
+        本函数只读取并填充 ctx。
+        """
         job_id = schedule.state.get("_job_id", "")
         timestamps = schedule.state.get("_timestamps", [])
         idx = schedule.state.get("_next_index", 0)
+        missed = list(schedule.state.get("_missed_in_batch", []) or [])
+
         if not timestamps or idx >= len(timestamps):
             self._repo.remove(schedule.id)
             return
 
-        expected_ms = timestamps[idx]
         now = wall_ms()
+        expected_ms = timestamps[idx]
         late_sec = max(0.0, (now - expected_ms) / 1000.0)
-
-        skipped_indices = schedule.state.get("_skipped_indices", []) or []
+        batch_size = 1 + len(missed)
 
         ctx = JobFireContext(
             job_id=job_id, fire_index=idx, timestamps=timestamps,
             character_id=schedule.state.get("character_id", "default"),
             message=schedule.state.get("message", ""),
             late_sec=late_sec,
-            skipped_indices=skipped_indices,
+            skipped_indices=missed,
+            batch_size=batch_size,
         )
 
         async with self._concurrency:
@@ -366,67 +375,67 @@ class TemporalScheduler:
                 except Exception as e:
                     logger.error(f"[时策] on_job_fire 异常: {e}")
 
-        await self._advance_or_terminate(job_id)
+        await self._advance_after_batch(job_id, idx, batch_size)
 
-    async def _advance_or_terminate(self, job_id: str) -> None:
-        """推进到下一个未过期时间戳（跳过已过期的则内联触发），或队列耗尽时终止。"""
+    async def _advance_after_batch(self, job_id: str, last_fired_idx: int, batch_size: int) -> None:
+        """本轮触发完后推进。
+
+        - 检查 next_idx 起是否有一段"被上一发阻塞挤掉的过期链"
+        - 若有 → 把 next_idx 作主 fire、next_idx+1..chain_end 作 missed，inline 触发
+        - 若无 → 正常 schedule 到 next_idx，等 timer 唤醒
+        - 超过队列末 → 终止
+        """
         schedules = self._get_job_schedules(job_id)
         if not schedules:
             return
         s0 = schedules[0]
         ts = s0.state.get("_timestamps", [])
-        idx = s0.state.get("_next_index", 0)
+        next_idx = last_fired_idx + 1
+
         for s in schedules:
             self._repo.remove(s.id)
 
+        # 队列耗尽 → 终止
+        if next_idx >= len(ts):
+            self._job_meta.pop(job_id, None)
+            self._repo._persist()
+            return
+
         now = wall_ms()
-        total_fired = (s0.state.get("_total_fired", 0) or 0) + 1  # 本次 fire 完成，+1
 
-        # ── 正常推进 ──
-        next_idx = None
-        for i in range(idx + 1, len(ts)):
-            if ts[i] > now:
-                next_idx = i
-                break
+        # 检测"被挤掉的过期链"：next_idx 起连续已过期的点
+        chain_end = next_idx
+        while chain_end + 1 < len(ts) and ts[chain_end + 1] <= now:
+            chain_end += 1
 
-        if next_idx is not None:
-            skipped = list(range(idx + 1, next_idx))
+        total_fired = (s0.state.get("_total_fired", 0) or 0) + batch_size
 
+        if chain_end > next_idx:
+            # 有挤掉的点：主 fire = next_idx，missed = next_idx+1..chain_end
+            missed = list(range(next_idx + 1, chain_end + 1))
             base_state = {
                 "_job_id": job_id, "_timestamps": ts,
                 "character_id": s0.state.get("character_id", "default"),
                 "message": s0.state.get("message", ""),
-                "_skipped_indices": skipped,
+                "_missed_in_batch": missed,
                 "_total_fired": total_fired,
             }
             self._create_schedule_at_index(job_id, s0.name, base_state, ts, next_idx)
+            # ts[next_idx] <= now，立即 inline 触发
+            new_schedules = self._get_job_schedules(job_id)
+            if new_schedules:
+                await self._fire(new_schedules[0])
+            return
 
-            # 如果新 schedule 的时间戳已经过期，不走定时器，在当前帧内联触发
-            if ts[next_idx] <= now:
-                new_schedules = self._get_job_schedules(job_id)
-                if new_schedules:
-                    await self._fire(new_schedules[0])
-                    return  # _fire 内部已递归推进/终止，不需要额外清理
-        else:
-            # 全部时间戳已过期：把最后一个任务连带所有跳过的索引一起触发
-            # AI 看到后一次性补发全部
-            last_idx = len(ts) - 1
-            if idx < last_idx:
-                all_skipped = list(range(idx + 1, last_idx))
-                base_state = {
-                    "_job_id": job_id, "_timestamps": ts,
-                    "character_id": s0.state.get("character_id", "default"),
-                    "message": s0.state.get("message", ""),
-                    "_skipped_indices": all_skipped,
-                    "_total_fired": total_fired,
-                }
-                self._create_schedule_at_index(job_id, s0.name, base_state, ts, last_idx)
-                new_schedules = self._get_job_schedules(job_id)
-                if new_schedules:
-                    await self._fire(new_schedules[0])
-                    return
-            self._job_meta.pop(job_id, None)
-
+        # 正常推进
+        base_state = {
+            "_job_id": job_id, "_timestamps": ts,
+            "character_id": s0.state.get("character_id", "default"),
+            "message": s0.state.get("message", ""),
+            "_missed_in_batch": [],
+            "_total_fired": total_fired,
+        }
+        self._create_schedule_at_index(job_id, s0.name, base_state, ts, next_idx)
         self._repo._persist()
 
     # ── 辅助 ──

@@ -37,6 +37,7 @@ from datetime import datetime
 from character import get_history_path
 from character.history import History
 from character.registry import registry
+from common.logger import logger
 from experience.adapter.state import on_state_update
 from experience.io import load_all_l1, load_compression_log
 from experience.io.reader import (
@@ -707,14 +708,33 @@ def dump_experience(character_name: str,
     """end-of-round 协调者：写块1 状态 + 块2 对话增量 + 累加 ICP + 维护 written_len。
 
     由 common/lifecycle.py:_post_round_async 唯一调用。
+    以及 tool/builtin_tools/characters.py:_finalize_and_respond 在跨角色调用后调用。
 
     流程：
+        0. 兜底：若 experience.md 未初始化（块0 为空），调 on_register 写入完整骨架
+           ——这是为 send_to_character 等不走 form_full_context 兜底的路径提供保险
         1. 读 history.json + _dump_meta.json（IO）
         2. 把 round_usage 累加到 _dump_meta.json 的 ICP 累计字段（持久化，跨重启累计）
         3. 用 round_context 写块1（走 on_state_update）
         4. 若有新增对话消息，走 on_round_complete 写块2
         5. 落盘 _dump_meta.json（含更新后的 written_len）
     """
+    # ── 步骤0：兜底初始化 ──
+    # 正常情况下主循环走 form_full_context 时已触发 on_register，
+    # 但 send_to_character 等独立路径不会调 form_full_context，
+    # 这里检测到 experience.md 未初始化（块0 空）就主动调 on_register 补全骨架。
+    exp_blocks = load_experience(character_name)
+    if not exp_blocks[0]:
+        try:
+            from experience.adapter.init import on_register as _on_register
+            from character.registry import registry as _registry
+            _cfg = _registry.get_config(character_name)
+            _on_register(character_name, _cfg)
+        except Exception as e:
+            logger.warning(
+                f"  [dump_experience] 兜底初始化 {character_name} 经验骨架失败: "
+                f"{type(e).__name__}: {e}")
+
     # 始终从磁盘读取最新状态
     hp = str(get_history_path(character_name))
     hist = History(hp).load()

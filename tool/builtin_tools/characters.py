@@ -14,7 +14,7 @@ from experience.adapter.conversation import build_system_message, _extract_pure_
 from common.logger import logger
 from common.cli_output import set_display_name
 from data_shape import ActorConfig, IPURuntime, RoleConfig
-from tool.builtin import _current_actor, set_actor
+from tool.builtin import current_actor, set_actor
 from yinao import IPU_REGISTRY, resolve_ipu, list_ipu_providers, resolve_chat, sync_config_to_ipu
 
 
@@ -110,7 +110,7 @@ def list_characters() -> str:
             ipu = config.runtime.ipu
             title = config.identity.title or "(未设置头衔)"
             traits = config.identity.traits or "(无描述)"
-            active = "(当前)" if name == _current_actor else ""
+            active = "(当前)" if name == current_actor() else ""
             lines.append(f"  {name}{active}: {title} | {prov}/{ipu} | {traits}")
         except (KeyError, AttributeError, TypeError) as e:
             # 配置损坏时降级到单行占位，不阻断其他角色展示
@@ -130,7 +130,7 @@ async def send_to_character(arguments: dict) -> str:
         initial_provider, initial_ipu_short, _ = _resolve_recipient_ipu(recipient, recipient_config)
     except ValueError as e:
         return f"[Error] {e}。请用 update_runtime 修正其 ipu 参数。"
-    _sender = _current_actor
+    _sender = current_actor()
     recipient_history = History(str(get_history_path(recipient))).load()
     recipient_history.append_pair(f"[来自 {_sender} 的消息]\n{message}", "")
     all_msgs = _build_recipient_messages(recipient_config, recipient_history, recipient)
@@ -211,6 +211,21 @@ async def _finalize_and_respond(
     if recipient_history.messages and recipient_history.messages[-1].get("role") == "assistant":
         recipient_history.messages[-1]["content"] = reply
         recipient_history.save()
+    # ── dump 接收者经验：与主对话循环一致，让 experience.md 同步反映本轮对话 ──
+    # 主循环在 _post_round_async 调用 dump_experience(ctx.character_name, ...)，
+    # 这里对应 dump 接收者，否则星空诗人等被叫角色的 experience.md 只剩占位符。
+    try:
+        # 延迟 import：避免与 tool.builtin/tools 在加载时产生循环
+        from experience import dump_experience
+        from experience.adapter.state import build_round_context
+        from yinao.weaver.round_state import last_round as _last_round
+        _usage = _last_round.usage if _last_round.usage else None
+        round_ctx = build_round_context(recipient) if _usage else ""
+        dump_experience(
+            recipient, round_context=round_ctx or None,
+            round_usage=_usage, )
+    except Exception as e:
+        logger.warning(f"  [send_to_character] dump {recipient} 经验失败: {type(e).__name__}: {e}")
     return (
         f"🔔 {recipient} 无法看到你的普通回复——继续对话请调用 send_to_character\n\n"
         f"[来自 {recipient} 的回复]\n\n{reply}\n\n"

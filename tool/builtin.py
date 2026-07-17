@@ -95,6 +95,16 @@ def set_actor(name: str):
     _current_actor = name
 
 
+def current_actor() -> str:
+    """获取当前 actor 名（每次访问读取最新值）。
+
+    ⚠️ 不要用 `from tool.builtin import _current_actor` 拿变量——
+    `from ... import x` 是绑定导入时的旧值，后续 `set_actor()` 修改模块全局
+    不会反映到这个局部绑定。所有工具函数应该调 ``current_actor()`` 拿最新值。
+    """
+    return _current_actor
+
+
 # ── update_runtime 工具使用的 helper ────────────────────────────
 # 这些被 builtin_tools.config 的 handle_update_runtime 调用，
 # 也被 tests/test_update_runtime.py 直接 import 测试。

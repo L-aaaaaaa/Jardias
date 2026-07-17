@@ -18,6 +18,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+# 关键：先 import tool.builtin，填充 _BUILTIN_HANDLERS。
+# 否则后续 `from experience import ...` 会触发 experience/__init__.py →
+# conversation.py → tool.builtin.tools → _load_builtin_handlers → 反向 import
+# characters（部分初始化）→ ImportError。
+import tool.builtin  # noqa: E402  noqa: F401
+
 # 把 logs/ 也写到临时目录，避免污染（导入 common.logger 时它会立刻创建 logs/）
 import tempfile  # noqa: E402
 

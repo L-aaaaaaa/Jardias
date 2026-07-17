@@ -42,8 +42,7 @@ def print_character_menu(character_list: list[str]) -> None:
         print("\n" + tr_no_chars())
 
     print("\n  " + tr_create_new())
-    if character_list:
-        print("  " + tr_exit())
+    print("  " + tr_exit())
     print("  [L] 切换语言 / Switch Language")
     separator_to_terminal("—", 20)
 

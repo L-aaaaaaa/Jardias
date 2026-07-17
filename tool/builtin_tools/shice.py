@@ -8,13 +8,18 @@ from __future__ import annotations
 import time
 
 from schedule.strategies import wall_ms
-from tool.builtin import _current_actor
 
 
 def _get_scheduler():
     """延迟获取 scheduler 实例（避免模块导入时拿到 None 引用）。"""
     from tool.builtin import _scheduler
     return _scheduler
+
+
+def _get_actor() -> str:
+    """延迟获取当前 actor 名（避免 from-import 绑定陷阱）。"""
+    from tool.builtin import current_actor
+    return current_actor()
 
 
 def schedule_add(arguments: dict) -> str:
@@ -29,7 +34,7 @@ def schedule_add(arguments: dict) -> str:
     if not valid: return "[Error] 所有时间戳均已过期超过 60 秒"
     job_id = _scheduler.add_recurring(
         name=f"时策-{message[:20]}", message=message,
-        timestamps=valid, character_id=_current_actor, )
+        timestamps=valid, character_id=_get_actor(), )
     dropped = len(timestamps) - len(valid)
     info = f"已注册 {len(valid)} 个时间点"
     if dropped: info += f"（{dropped} 个已过期被忽略）"

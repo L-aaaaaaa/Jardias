@@ -28,11 +28,12 @@ from experience.io import (
 
 def summarize_conversation(arguments: dict) -> str:
     """角色主动压缩早期对话历史。"""
-    from tool.builtin import _current_actor
+    from tool.builtin import current_actor
 
+    _actor = current_actor()  # 每次调用都拿最新值
     keep_recent_turns = int(arguments.get("keep_recent_turns", 6))
     topic_hint = arguments.get("topic", "")
-    history_path = get_history_path(_current_actor)
+    history_path = get_history_path(_actor)
     if not history_path.exists(): return "[Error] 无历史记录"
     with open(history_path, "r", encoding="utf-8") as f:
         messages: list[dict] = json.load(f)
@@ -56,14 +57,14 @@ def summarize_conversation(arguments: dict) -> str:
         id=sid, start_time=starttime, end_time=endtime, message_count=len(compress_slice),
         user_turns=user_turns, topic=topic, detail=detail, key_events=events,
         msg_indices=(abs_from, abs_to), source="manual", )
-    saved_path = save_l1(_current_actor, summary)
+    saved_path = save_l1(_actor, summary)
     lines = [
         f"[摘要已保存] {l1summary_to_context_string(summary)}",
         f"  详情: {detail}",
         f"  截断位置: {cutoff_time} — 保留最近 {keep_recent_turns} 轮原文",
         f"  文件: {saved_path}", ]
     logger.info(f"  📦 角色主动摘要 | {user_turns} 轮 → {topic} | {saved_path}")
-    append_compression_record(character_name=_current_actor, source="summarize_conversation",
+    append_compression_record(character_name=_actor, source="summarize_conversation",
         l1_id=summary.id, abs_from=abs_from, abs_to=abs_to)
     return "\n".join(lines)
 
@@ -72,24 +73,25 @@ async def archive_recent_talk(arguments: dict) -> str:
     """按时间戳精确归档一段对话为话题摘要。
     用户指令如「转为摘要」「归档这个话题」时调用。
     """
-    from tool.builtin import _current_actor, _format_error
+    from tool.builtin import current_actor, _format_error
 
+    _actor = current_actor()  # 每次调用都拿最新值
     args = _parse_archive_args(arguments)  # 纯函数
-    messages = _load_messages(_current_actor)  # 只加载原始数据
+    messages = _load_messages(_actor)  # 只加载原始数据
     if messages is None: return "[Error] 无历史记录"
     if err := _validate_purity(messages, args): return err  # 早返回
     archive_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     try:
-        result = await _execute_archive(_current_actor, args, messages)
+        result = await _execute_archive(_actor, args, messages)
     except ValueError as e:
         return _format_archive_value_error(e)
     except Exception as e:
         return _format_error(e)
-    visible_msgs = _compute_visible(messages, _current_actor)
+    visible_msgs = _compute_visible(messages, _actor)
     entry = _build_summary_entry(result)
     response = _build_tool_result(result)
     _persist_experience(  # 副作用收口
-        _current_actor, entry, visible_msgs, messages, arguments, response, archive_ts)
+        _actor, entry, visible_msgs, messages, arguments, response, archive_ts)
     return response
 
 
@@ -293,27 +295,28 @@ def recall_topic(arguments: dict) -> str:
     用户指令如「继续聊之前的话题」「回顾价值本质的讨论」时调用。
     返回续谈注入块，直接追加到上下文底部。
     """
-    from tool.builtin import _current_actor
+    from tool.builtin import current_actor
 
+    _actor = current_actor()  # 每次调用都拿最新值
     topic_label = arguments.get("topic_label", "")
     topic_id = arguments.get("topic_id", "")
     show_list = arguments.get("list_all", False)
 
-    history = History(_current_actor).load()
+    history = History(_actor).load()
     history_messages = history.messages
 
-    if show_list: return build_topics_context(_current_actor)
+    if show_list: return build_topics_context(_actor)
 
     if topic_id:
         try:
-            summary, block = on_recall(_current_actor, topic_label="", topic_id=topic_id)
+            summary, block = on_recall(_actor, topic_label="", topic_id=topic_id)
             return block
         except ValueError as e:
             return f"[Error] {e}"
 
     if topic_label:
         try:
-            summary, block = on_recall(_current_actor, topic_label=topic_label, topic_id="")
+            summary, block = on_recall(_actor, topic_label=topic_label, topic_id="")
             label = summary.topic_label or summary.topic or "未命名"
             return (
                 f"[话题回想] 找到「{label}」（ID: {summary.id}）\n"

@@ -414,32 +414,21 @@ async def _process_triggers(ctx, snapshot: list[str]):
         remaining_match = _re_module.search(r"剩余\s*(\d+)", raw)
 
         # 解析错过项：
-        # 有错过："，错过  #5未补,  #7未补"
-        # 无错过："，错过  0 项任务"
         missed_parts = _re_module.findall(r"#(\d+)未补", raw)
-        if missed_parts:
-            missed_str = "，错过  " + ",  ".join(f"#{n}未补" for n in missed_parts)
-        elif "，错过  0 项任务" in raw:
-            missed_str = ""  # 0项任务不需要显示
-        else:
-            missed_str = ""
-
+        missed_str = {
+            True: lambda: f"，错过  {',  '.join(f'#{n}未补' for n in missed_parts)}",
+            False: lambda: "，没有错过的任务" if "，错过  0 项任务" in raw else ""}[bool(missed_parts)]()
         # 解析 desc：去掉末尾的（共 N 条待处理）
         desc = body
-        if "（共 " in desc:
-            desc = desc[:desc.find("（共 ")].rstrip()
-
+        if "（共 " in desc: desc = desc[:desc.find("（共 ")].rstrip()
         late_str = late_match.group(1) if late_match else "0"
         remaining_str = remaining_match.group(1) if remaining_match else "0"
-
         user_input = (
-            f"【时策任务触发 {time_str}】本次行动：{desc}\n"
-            f"本次为第 {pos_str} 项 时策任务，共{total_str}项，"
-            f"本次延迟 {late_str}s{missed_str},  剩余 {remaining_str}项"
-        )
-
+            f"【时策任务触发 {time_str}】\n本次行动：{desc}\n"
+            f"【本次为第 {pos_str} 项 时策任务，共{total_str}项，本次延迟 {late_str}s{missed_str},  剩余 {remaining_str}项】")
         _clear_prompt_line()
         print(f"\n{user_input}")
+
         turn_ts = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
         round_ok, messages = await _run_turn(ctx, user_input, None, None, "")
         reply = extract_reply(messages) if round_ok else ""
@@ -559,7 +548,7 @@ async def interactive_loop():
     from common.bootstrap import bootstrap
     from common.cli_output import separator_to_terminal
     from character.character_menu import select_or_create_character
-    from common.i18n import tr_current_role, tr_quit_switch_hint, get_lang, toggle_lang
+    from common.i18n import tr_current_role, tr_quit_switch_hint, get_lang
     while True:
         result = select_or_create_character()
         if result is None:

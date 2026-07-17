@@ -14,7 +14,7 @@ def update_runtime(arguments: dict) -> str:
     如果 ipu 变了 → 抛 ModelSwitched 让 app.py 重建 client。
     其他参数 → 直接写 JSON，下轮生效。
     """
-    from tool.builtin import _current_actor, _apply_field, _format_circuit_error, _format_validation_error
+    from tool.builtin import current_actor, _apply_field, _format_circuit_error, _format_validation_error
     from character.config_io import load_config, save_config
     from yinao import IPU_REGISTRY
     from yinao.weaver import is_provider_available
@@ -27,7 +27,8 @@ def update_runtime(arguments: dict) -> str:
     except Exception as e:
         return _format_validation_error(e, "update_runtime")
 
-    config = load_config(_current_actor);
+    _actor = current_actor()  # 每次调用都拿最新值（避免 from-import 绑定陷阱）
+    config = load_config(_actor);
     rt = config.runtime
     actual_ipu = get_active_ipu()  # 实际运行引擎（fallback 后可能与文件不同）
     changes: list[str] = [];
@@ -58,7 +59,7 @@ def update_runtime(arguments: dict) -> str:
     _apply_field(args, rt, "reasoning_effort", changes)
     _apply_field(args, rt, "thinking_mode", changes)
     if not changes: return "[OK] no changes (all values match current)"
-    save_config(config, _current_actor)
+    save_config(config, _actor)
     if not ipu_changed:
         return f"[OK] runtime updated: {', '.join(changes)}"
     provider = resolve_ipu_provider(rt.ipu)
@@ -66,9 +67,9 @@ def update_runtime(arguments: dict) -> str:
     if provider is None: return error_hint
     if rt.ipu == provider: rt.ipu = next(iter(IPU_REGISTRY[provider].keys()))
     rt.provider = provider;
-    save_config(config, _current_actor)
+    save_config(config, _actor)
     from experience.adapter.init import on_ipu_switch
-    on_ipu_switch(_current_actor, config)
+    on_ipu_switch(_actor, config)
     request_switch(provider, rt.ipu)
     success_hint = f"[OK] runtime updated: {', '.join(changes)} → 将切换至 {provider}/{rt.ipu}"
     return success_hint
@@ -77,10 +78,11 @@ def update_runtime(arguments: dict) -> str:
 def update_identity(arguments: dict) -> str:
     """更新身份参数（system_prompt/title/traits/max_iterations 任意组合）。
     写 JSON 后下轮生效。 """
-    from tool.builtin import _current_actor
+    from tool.builtin import current_actor
     from character.config_io import load_config, save_config
 
-    config = load_config(_current_actor)
+    _actor = current_actor()  # 每次调用都拿最新值
+    config = load_config(_actor)
     ident = config.identity
     changes = []
     # - parser: arguments[key] 的转换函数（str/int/...）
@@ -98,7 +100,7 @@ def update_identity(arguments: dict) -> str:
         setattr(ident, attr, value)
         changes.append(f"{key}={value}" if log_value else key)
     if not changes: return "[OK] no changes"
-    save_config(config, _current_actor)
+    save_config(config, _actor)
     return f"[OK] identity updated: {', '.join(changes)}"
 
 

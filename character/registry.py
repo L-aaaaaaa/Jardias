@@ -22,7 +22,9 @@ class CharacterRegistry:
 
         之前只有 config.json 落盘，history.json 要等首次对话才创建，
         experience.md 要等首次 LLM 调用才写入。
-        现在 create 后目录里所有文件全部可见。
+        现在 create 后目录里所有文件全部可见，且 experience.md 是完整的 4 块骨架
+        （块0=系统提示、块1=状态占位、块2=历史骨架、块3=等待用户输入），
+        而不是占位符。
         """
         if self.exists(name):
             raise ValueError(f"角色 {name} 已存在")
@@ -31,6 +33,10 @@ class CharacterRegistry:
         from character.config_io import save_config
         save_config(config, name)
         _ensure_skeleton_files(name)
+        # 真正初始化 experience.md 骨架：与 experience.adapter.init.on_register 对齐，
+        # 让首次 dump 不需要走 form_full_context 的兜底（send_to_character 等不经过兜底）
+        from experience.adapter.init import on_register
+        on_register(name, config)
 
     def delete(self, name: str):
         if name == "default":
