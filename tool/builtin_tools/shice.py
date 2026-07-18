@@ -45,18 +45,21 @@ def schedule_add(arguments: dict) -> str:
 
 
 def schedule_list() -> str:
-    """列出所有活跃的时策任务。"""
+    """列出所有时策任务（包括已完成的）。"""
     _scheduler = _get_scheduler()
     if _scheduler is None: return "[OK] 时策调度器未初始化，无活跃任务"
     jobs = _scheduler.list_jobs()
-    if not jobs: return "[OK] 无活跃的时策任务"
-    header = f"共 {len(jobs)} 个活跃任务:"
-    lines = [f"  [{j['job_id']}] {j['name']} | 已触发 {j['fired']}/{j['total']} | 剩余 {j['remaining']}" for j in jobs]
+    if not jobs: return "[OK] 无时策任务"
+    header = f"共 {len(jobs)} 个任务:"
+    lines = []
+    for j in jobs:
+        status_tag = "●" if j.get("status") != "completed" else "○"
+        lines.append(f"  {status_tag} [{j['job_id']}] {j['name']} | 已触发 {j['fired']}/{j['total']} | 剩余 {j['remaining']}")
     return "\n".join([header] + lines)
 
 
 def schedule_cancel(arguments: dict) -> str:
-    """取消时策任务。"""
+    """取消时策任务（进行中的任务会被删除，已完成的任务不受影响）。"""
     _scheduler = _get_scheduler()
     if _scheduler is None: return "[Error] 时策调度器未初始化"
     job_id = arguments.get("job_id", "")

@@ -280,11 +280,14 @@ class TemporalScheduler:
                 seen.add(jid)
                 ts = s.state.get("_timestamps", [])
                 idx = s.state.get("_next_index", 0)
+                status = s.state.get("_status", "active")
+                remaining = len(ts) - idx - 1
                 results.append({
                     "job_id": jid, "name": s.name,
                     "message": s.state.get("message", ""),
                     "total": len(ts), "fired": idx + 1,
-                    "remaining": len(ts) - idx - 1,
+                    "remaining": remaining,
+                    "status": status,
                 })
         return results
 
@@ -395,10 +398,20 @@ class TemporalScheduler:
         for s in schedules:
             self._repo.remove(s.id)
 
-        # 队列耗尽 → 终止
+        # 队列耗尽 → 标记为已完成，保留在列表中供模型查询
         if next_idx >= len(ts):
-            self._job_meta.pop(job_id, None)
+            completed_state = dict(s0.state)
+            completed_state["_status"] = "completed"
+            completed_state["_completed_at"] = wall_ms()
+            s = Schedule(
+                id=str(uuid.uuid4())[:8], name=s0.name,
+                condition=None, context=None,
+                enabled=False, missed_policy=s0.missed_policy,
+                state=completed_state,
+            )
+            self._repo.add(s)
             self._repo._persist()
+            self._job_meta.pop(job_id, None)
             return
 
         now = wall_ms()
