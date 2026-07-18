@@ -241,7 +241,7 @@ jardias/
 - **代码**：[Apache License 2.0](meta/LICENSE-CODE)
 - **论文与文档**：[CC BY-NC-SA 4.0](meta/LICENSE-PAPERS)
 
-贡献前请阅读 [CONTRIBUTING](meta/CONTRIBUTING) 并签署对应的 [CLA](meta/CLA-INDIVIDUAL)。
+贡献前请阅读 [CONTRIBUTING](CONTRIBUTING.md) 并签署对应的 [CLA](CLA-INDIVIDUAL)。
 
 > 协议文档（[meta/LICENSE-CODE](meta/LICENSE-CODE)、[meta/LICENSE-PAPERS](meta/LICENSE-PAPERS)）
 

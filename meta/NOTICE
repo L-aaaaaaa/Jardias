@@ -1,4 +1,4 @@
-Jardias (a.k.a. Actor01 / Jarnis)
+Jardias
 Copyright 2026 Cazlor
 
 This product includes software developed by the Jardias project.
@@ -23,11 +23,8 @@ This product includes the following third-party software components,
 each governed by its own license terms:
 
 - openai (Apache License 2.0) — OpenAI-compatible SDK used for
-  multi-provider model clients under yinao/ipu_client/.
+  multi-provider model clients under yinao/launcher/ and yinao/weaver/.
   https://github.com/openai/openai-python
-
-
-  https://github.com/Delgan/loguru
 
 - pydantic (MIT License) — data shape validation under data_shape/.
   https://github.com/pydantic/pydantic
@@ -36,7 +33,7 @@ each governed by its own license terms:
 
 Trademarks
 
-The names "Jardias", "Jarnis", "Actor01", "小明", "IPU", "Yinao",
+The names "Jardias", "Actor01", "小明", "IPU", "Yinao",
 "Shice", "HEEL", and "ACP" are trademarks or distinctive identifiers
 of the Jardias project. They are NOT licensed under Apache License 2.0
 and may not be used to endorse or promote derivative products without

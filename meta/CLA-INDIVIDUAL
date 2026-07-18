@@ -13,9 +13,9 @@
 
 ### 方式一：手动签署（推荐）
 
-1. 下载官方 PDF：https://www.apache.org/licenses/icla.pdf
+1. 下载官方 PDF：[icla.pdf](icla.pdf)（或访问 https://www.apache.org/licenses/icla.pdf）
 2. 打印、手写签名、扫描为 PDF
-3. 发送至项目作者（联系方式见 [AUTHORS](AUTHORS)）
+3. 发送至项目作者（联系方式见根目录 `AUTHORS`）
 4. 收到确认邮件后即可正常提 PR
 
 ### 方式二：电子签署（CLA Assistant）

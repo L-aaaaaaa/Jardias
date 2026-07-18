@@ -20,7 +20,7 @@ Every 15 seconds, send me a scientist's name (30 seconds from now). Note: Charac
 Every 1 second, say a random fruit name (starting in 20 seconds), for a total of 10 times. If you miss 2 cumulative times (e.g., network delay), change the interval to 10 seconds for the rest. Missed fruits should be supplemented along with the current fruit when first discovered.
 Every 10 seconds, say a random place name (starting in 15 seconds), for 20 times, or until I prepare to rest.
 
-### 串联 (Chaining)
+### Chaining
 
 (User first says to character 1:) Every 2 seconds, say a random candy name (starting in 60 seconds), for a total of 10 times. If you miss 1 cumulative time (e.g., network delay), change the interval to 10 seconds for the rest. Missed candies should be supplemented along with the current candy when first discovered.
 Every 15 seconds, send me a scientist's name (starting in 30 seconds).
@@ -63,7 +63,7 @@ cp .env.example .env
 python app.py
 ```
 
-> See [运行和开发提示文档](library/参考/运行和开发提示.md) for detailed instructions.
+> See [Run and Development Guide](library/参考/运行和开发提示.md) for detailed instructions.
 
 **Dependencies**: `openai>=1.0.0`, `pydantic>=2.0.0`
 **Python Version**: ≥ 3.10
@@ -76,7 +76,7 @@ python app.py
 
 > It doesn't fly, it doesn't fight. But it keeps updating to break the dimensional wall.
 
-Jardias is a reference implementation of an Agent framework, demonstrating constructive proofs of capabilities such as autonomous collaboration, memory management, and semantic-driven scheduling. Suitable for research, experimentation, and secondary development. The current Jardias implementation is a framework that enables AI to not just answer questions, but to be cognitive agents that autonomously collaborate, grow their memory, and perceive time—maximizing底层抽象 to provide open interfaces for future system evolution.
+Jardias is a reference implementation of an Agent framework, demonstrating constructive proofs of capabilities such as autonomous collaboration, memory management, and semantic-driven scheduling. Suitable for research, experimentation, and secondary development. The current Jardias implementation is a framework that enables AI to not just answer questions, but to be cognitive agents that autonomously collaborate, grow their memory, and perceive time—maximizing low-level abstraction to provide open interfaces for future system evolution.
 
 ---
 
@@ -250,7 +250,7 @@ jardias/
 - **Code**: [Apache License 2.0](meta/LICENSE-CODE)
 - **Papers & Documentation**: [CC BY-NC-SA 4.0](meta/LICENSE-PAPERS)
 
-Before contributing, please read [CONTRIBUTING](meta/CONTRIBUTING) and sign the corresponding [CLA](meta/CLA-INDIVIDUAL).
+Before contributing, please read [CONTRIBUTING](CONTRIBUTING.md) and sign the corresponding [CLA](CLA-INDIVIDUAL).
 
 > License documents: [meta/LICENSE-CODE](meta/LICENSE-CODE), [meta/LICENSE-PAPERS](meta/LICENSE-PAPERS)
 

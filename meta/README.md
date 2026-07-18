@@ -73,8 +73,8 @@
 
 ## 待补内容（标记 [TODO]）
 
-- `CLA-INDIVIDUAL` / `CLA-CORPORATE` — 下载官方 PDF 替换占位
-- `CODE_OF_CONDUCT.md` — 采用 Contributor Covenant 2.1 模板
-- `SECURITY.md` — 安全漏洞报告流程（私下联系 vs 公开 issue）
-- `AUTHORS` — 项目作者与主要贡献者列表
+- [x] `CONTRIBUTING.md` — 已补完（根目录 + meta/ 各一份）
+- [x] `CLA-INDIVIDUAL` / `CLA-CORPORATE` — 已下载官方 PDF（icla.pdf / ccla.pdf）
+- `SECURITY.md` — 安全漏洞报告流程（私下联系 vs 公开 issue）— 已有，需确认根目录是否需要
+- `AUTHORS` — 项目作者与主要贡献者列表 — 已有
 - `CHANGELOG` — 补完整历史版本条目

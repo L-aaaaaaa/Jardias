@@ -4,7 +4,7 @@
 
 ## 1. 行为准则
 
-本项目采用 Contributor Covenant 2.1。参见 `meta/CODE_OF_CONDUCT.md`。
+本项目采用 Contributor Covenant 2.1。参见 `CODE_OF_CONDUCT.md`。
 
 ## 2. 贡献者许可协议（CLA）
 
@@ -17,7 +17,7 @@
 
 1. 下载对应模板
 2. 填入姓名 / 联系方式 / 签名
-3. 邮件发送给项目作者（联系方式见 `meta/AUTHORS`）
+3. 邮件发送给项目作者（联系方式见 `AUTHORS`）
 4. 收到确认后即可正常提 PR
 
 **为什么需要 CLA**：CLA 确保你的贡献可以被项目作者以 Apache-2.0 协议授权给下游使用者，避免未来协议变更时产生法律纠纷。
@@ -89,4 +89,4 @@ scope 示例：`tool/builtin`、`schedule/shice`、`library/HEEL`
 
 - Issue 讨论：项目仓库的 GitHub Issues
 - 学术争议：开标 `[discussion]` 标签的 issue
-- 安全问题：私下联系作者（参见 `meta/SECURITY.md`）
+- 安全问题：私下联系作者（参见 `SECURITY.md`）
