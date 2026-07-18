@@ -201,7 +201,7 @@ def build_config_context(config, character_name: str | None = None) -> str:
 图片策略: 收到图片但当前引擎无 vision → 通过 update_runtime 切到有 vision 的引擎。
 
 ### 思考、回复语言
-你的回复、推理过程（reasoning/thinking）、内心独白、工具调用前的分析使用的语言，默认与名字语言匹配。
+你的回复、推理过程（reasoning/thinking）、内心独白、工具调用前的分析使用的语言，默认【与名字语言匹配】。
 注意：这不是建议，是硬性要求。
 
 ### 角色管理

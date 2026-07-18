@@ -402,7 +402,8 @@ async def _process_triggers(ctx, snapshot: list[str]):
         range_match = _re_module.search(r"#(\d+)-(\d+)/(\d+)", raw)
         single_match = _re_module.search(r"#(\d+)/(\d+)", raw)
         if range_match:
-            pos_str = f"{range_match.group(1)}-{range_match.group(2)}"
+            # pos_str = f"{range_match.group(1)}-{range_match.group(2)}"
+            pos_str = f"{range_match.group(2)}"
             total_str = range_match.group(3)
         elif single_match:
             pos_str = single_match.group(1)
@@ -415,9 +416,20 @@ async def _process_triggers(ctx, snapshot: list[str]):
 
         # 解析错过项：
         missed_parts = _re_module.findall(r"#(\d+)未补", raw)
-        missed_str = {
-            True: lambda: f"，错过  {',  '.join(f'#{n}未补' for n in missed_parts)}",
-            False: lambda: "，没有错过的任务" if "，错过  0 项任务" in raw else ""}[bool(missed_parts)]()
+        # 范围匹配时：错过的是 范围起点 到 当前任务前一个
+        if range_match:
+            range_start = int(range_match.group(1))
+            current_num = int(range_match.group(2))
+            missed_nums = list(range(range_start, current_num))
+        else:
+            current_num = int(single_match.group(1)) if single_match else -1
+            missed_nums = [int(n) for n in missed_parts if int(n) != current_num]
+
+        if missed_nums:
+            missed_str = "，错过  " + "、".join(f"#{n}未补" for n in missed_nums)
+        else:
+            missed_str = "，没有错过的任务"
+
         # 解析 desc：去掉末尾的（共 N 条待处理）
         desc = body
         if "（共 " in desc: desc = desc[:desc.find("（共 ")].rstrip()
@@ -453,6 +465,13 @@ async def _process_triggers(ctx, snapshot: list[str]):
         if reply:
             ctx.history.append_assistant(reply)
         ctx.history.save()
+        # 更新 experience.md 块2，使下次时策触发能看到历史上下文
+        from experience.adapter.conversation import dump_experience
+        dump_experience(
+            ctx.character_name,
+            round_context="",
+            round_usage=None,
+        )
         ctx.config = load_config(ctx.character_name, config_dir=ctx.config_dir)
         sync_config_to_ipu(ctx.config, ctx.ipu_config)
         ctx.turn_num += 1
