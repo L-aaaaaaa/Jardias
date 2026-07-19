@@ -48,14 +48,14 @@ dependencies = [
 # 文档/测试/开发依赖。
 # 用户安装时:`pip install jardias[dev]` 一次性获得全部。
 dev = [
-    "pytest>=7.0,<9.0",
+    "pytest>=7.0,<10.0",
     "pytest-asyncio>=0.21",
     "ruff>=0.1,<1.0",
     "mypy>=1.5,<2.0",
     "types-requests>=2.31",
 ]
 test = [
-    "pytest>=7.0,<9.0",
+    "pytest>=7.0,<10.0",
     "pytest-asyncio>=0.21",
 ]
 lint = [

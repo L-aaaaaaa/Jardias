@@ -230,5 +230,14 @@ def test_read_file_handles_permission_error(tmp_path, monkeypatch):
 
 
 def asyncio_run(coro):
+    """同步包装 helper：Python 3.10+ 在无 running loop 的 main thread 上
+    `asyncio.get_event_loop()` 会失败。这里优先沿用已有 loop，缺失时回退
+    `asyncio.run()` 让其自建/自销毁。"""
     import asyncio
-    return asyncio.get_event_loop().run_until_complete(coro)
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError("loop closed")
+        return loop.run_until_complete(coro)
+    except RuntimeError:
+        return asyncio.run(coro)
