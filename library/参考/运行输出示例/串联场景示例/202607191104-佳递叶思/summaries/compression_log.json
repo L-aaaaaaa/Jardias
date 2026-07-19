@@ -1,0 +1,26 @@
+[
+  {
+    "id": "C-20260719-111318",
+    "source": "archive_recent_talk",
+    "l1_id": "T-20260719-111305",
+    "abs_from": 0,
+    "abs_to": 68,
+    "compressed_at": "2026-07-19 11:13:18"
+  },
+  {
+    "id": "C-20260719-111332",
+    "source": "archive_recent_talk",
+    "l1_id": "T-20260719-111318",
+    "abs_from": 69,
+    "abs_to": 82,
+    "compressed_at": "2026-07-19 11:13:32"
+  },
+  {
+    "id": "C-20260719-111558",
+    "source": "auto_summarize",
+    "l1_id": "L1-20260719-111548",
+    "abs_from": 83,
+    "abs_to": 93,
+    "compressed_at": "2026-07-19 11:15:58"
+  }
+]
