@@ -1,0 +1,74 @@
+# Trademark Policy
+
+Last updated: 2026-07-09
+
+## Reserved names
+
+The following names and identifiers are reserved by the Jardias project
+author (Cazlor) for use in referring to the original project and its
+official derivatives:
+
+- **Jardias** — primary project name
+- **Actor01** — current code name in the repository
+- **小明** — example character used in documentation and demos
+- **IPU** (Intelligence Primitive Unit / 智能基元) — architectural term
+- **Yinao** (义脑) — architectural term
+- **Shice** (时策) — architectural term and scheduling system name
+- **HEEL** — memory architecture name
+- **ACP** (Agent Context Protocol) — protocol name
+
+## What is NOT covered
+
+The Apache License 2.0 (under which the code is licensed) does NOT
+grant you any right to use these names. Apache Section 6 explicitly
+reserves trademarks for the Licensor.
+
+## Allowed without permission
+
+You may, without prior written permission, use the reserved names in
+the following ways:
+
+- **Reference and discussion**: writing articles, blog posts, talks,
+  or academic papers that reference Jardias / Actor01 by name.
+- **Verbatim forks**: forking the source code on public hosting
+  platforms (GitHub, GitLab, etc.) under the project's original name,
+  provided that the fork clearly identifies modifications and does
+  not imply endorsement by the original project.
+- **Compatibility statements**: stating that your product is
+  "compatible with Jardias" or "supports the Shice protocol" in
+  factual, non-promotional language.
+
+## Requires written permission
+
+The following uses require prior written permission from the project
+author:
+
+- **Product or service names**: naming a commercial product,
+  SaaS service, or commercial training course after any reserved name
+  or using one as a sub-brand.
+- **Logo or visual identity**: using project logos or distinctive
+  visual marks in merchandise, marketing, or third-party UI.
+- **Endorsement implication**: using the names in marketing copy
+  in a way that suggests official endorsement or certification by
+  the Jardias project.
+- **Academic misappropriation**: republishing the papers under
+  library/ in a commercial publication without honoring the
+  CC BY-NC-SA 4.0 terms (NonCommercial clause and ShareAlike clause).
+
+## Academic citation
+
+The papers in library/ are academic works. Citing them in other
+academic work, translating them for non-commercial purposes, or
+adapting them into non-commercial derivative papers is encouraged
+and falls under the CC BY-NC-SA 4.0 license — no additional
+trademark permission is required for factual academic use.
+
+## Reporting misuse
+
+If you become aware of uses that may violate this policy, please
+open a public issue or contact the project author.
+
+## Changes
+
+This policy may be updated. Material changes will be announced in
+the project's release notes and dated above.

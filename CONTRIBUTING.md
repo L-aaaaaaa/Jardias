@@ -1,0 +1,92 @@
+# Contributing to Jardias
+
+感谢你考虑为 Jardias 贡献。本文件说明贡献流程、CLA 签署、PR 规范与开发约定。
+
+## 1. 行为准则
+
+本项目采用 Contributor Covenant 2.1。参见 `CODE_OF_CONDUCT.md`。
+
+## 2. 贡献者许可协议（CLA）
+
+**重要**：在提交第一个被合并的 PR 之前，你需要签署 CLA：
+
+- **个人贡献者**：Apache Individual CLA（ICLA）— 见 `meta/CLA-INDIVIDUAL` 或直接下载 [icla.pdf](meta/icla.pdf)
+- **企业贡献者**：Apache Corporate CLA（CCLA）— 见 `meta/CLA-CORPORATE` 或直接下载 [ccla.pdf](meta/ccla.pdf)
+
+签署流程：
+
+1. 下载对应模板
+2. 填入姓名 / 联系方式 / 签名
+3. 邮件发送给项目作者（联系方式见 `AUTHORS`）
+4. 收到确认后即可正常提 PR
+
+**为什么需要 CLA**：CLA 确保你的贡献可以被项目作者以 Apache-2.0 协议授权给下游使用者，避免未来协议变更时产生法律纠纷。
+
+## 3. 提交 PR 的流程
+
+1. Fork 仓库
+2. 创建特性分支：`git checkout -b feat/your-feature`
+3. 提交改动（commit message 建议遵循 Conventional Commits）
+4. 推送到 fork：`git push origin feat/your-feature`
+5. 在主仓库开 PR，描述：
+   - 改动内容与动机
+   - 关联的 issue 编号
+   - 测试覆盖情况
+6. 等待 review，可能需要反复修改
+
+## 4. 开发约定
+
+### 代码风格
+
+- Python 3.10+，类型注解优先
+- 缩进 4 空格，不混用 tab
+- 模块导入顺序：标准库 → 第三方 → 项目内（用 isort 自动）
+- 命名遵循 `library/参考/命名即架构.md` 的术语体系（智能基元 / 义脑 / 时策 等）
+
+### 测试
+
+- 新增功能必须有对应测试
+- 测试文件命名 `tests/test_*.py`
+- 修改现有代码时确保所有测试通过：`pytest tests/`
+- 提交前本地运行：`python app.py --list` 确认未破坏 CLI
+
+### 文档
+
+- 用户可见的改动同步更新 `README.md` / `doc/`
+- 论文级概念变更同步更新 `library/` 下的对应论文
+- 注释和 docstring 用中文（保持项目术语体系的连贯性）
+
+## 5. Commit message 规范
+
+```
+<type>(<scope>): <subject>
+
+<body>
+
+<footer>
+```
+
+type 取值：
+
+- `feat` — 新功能
+- `fix` — bug 修复
+- `docs` — 仅文档
+- `refactor` — 不改变行为的重构
+- `test` — 新增或修改测试
+- `chore` — 构建 / 工具 / 依赖
+- `paper` — 论文内容改动
+
+scope 示例：`tool/builtin`、`schedule/shice`、`library/HEEL`
+
+## 6. 哪些 PR 不接受
+
+- 不接受未经 CLA 签署的 PR
+- 不接受仅做格式调整而无功能/修复价值的大批量 PR
+- 不接受与论文理论体系冲突的实现改动（除非先改论文）
+- 不接受添加未在 `library/` 论文中定义的新概念（先讨论、再改论文、再写代码）
+
+## 7. 讨论与求助
+
+- Issue 讨论：项目仓库的 GitHub Issues
+- 学术争议：开标 `[discussion]` 标签的 issue
+- 安全问题：私下联系作者（参见 `SECURITY.md`）

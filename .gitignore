@@ -1,0 +1,38 @@
+# IDE & Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+venv/
+.venv/
+env/
+.env
+
+# Jardias specific
+logs/
+character_data/
+endtest_logs/
+schedule/concurrency_data.json
+_test_*
+_*.txt
+_t.*
+_chk.*
+_seg*
+
+# Temporary files
+*~
+\#*#

@@ -1,0 +1,59 @@
+# Changelog
+
+All notable changes to Jardias will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+> 占位 — 待补完
+
+### Added
+
+- Initial open-source preparation: LICENSE / NOTICE / TRADEMARK / CONTRIBUTING / CLA 骨架文件
+- meta/ 目录收纳开源相关元文件
+
+### Changed
+
+- (none yet)
+
+### Deprecated
+
+- (none yet)
+
+### Removed
+
+- (none yet)
+
+### Fixed
+
+- (none yet)
+
+### Security
+
+- (none yet)
+
+---
+
+## 版本号约定
+
+- MAJOR：架构层重大变更（如：引入新升维、推翻现有公理）
+- MINOR：新功能、新论文、新工具、新角色类型
+- PATCH：bug 修复、文档更新、配置默认值调整
+
+论文版本独立编号 — 见各论文文件内的版本号。代码版本与论文版本不强制同步。
+
+## 引用建议
+
+论文引用请使用各论文内文末尾的 BibTeX 条目，代码引用请使用：
+
+```
+@software{jardias2026,
+  title  = {Jardias: An AI Actor System with Semantic-Driven Scheduling},
+  author = {Cazlor},
+  year   = {2026},
+  url    = {https://github.com/<owner>/jardias},
+  note   = {Apache License 2.0 (code) / CC BY-NC-SA 4.0 (papers)}
+}
+```

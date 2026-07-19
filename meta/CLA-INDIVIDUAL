@@ -1,0 +1,50 @@
+# Apache Individual Contributor License Agreement (ICLA)
+
+> 提交第一个被合并的 PR 之前须签署本协议。
+> 签署流程见 [CONTRIBUTING](CONTRIBUTING.md)。
+
+---
+
+本文件基于 Apache Software Foundation ICLA 标准模板。
+
+**完整官方 PDF 模板**：https://www.apache.org/licenses/icla.pdf
+
+## 操作指南
+
+### 方式一：手动签署（推荐）
+
+1. 下载官方 PDF：[icla.pdf](icla.pdf)（或访问 https://www.apache.org/licenses/icla.pdf）
+2. 打印、手写签名、扫描为 PDF
+3. 发送至项目作者（联系方式见根目录 `AUTHORS`）
+4. 收到确认邮件后即可正常提 PR
+
+### 方式二：电子签署（CLA Assistant）
+
+如果仓库启用了 [CLA Assistant](https://cla-assistant.io/) GitHub App，PR 提交后会自动弹出签署链接，在线完成即可，无需手动发送。
+
+---
+
+## ICLA 关键条款摘要（非法律建议）
+
+- **你保有你的版权**：你贡献的代码，版权仍归你
+- **你授予项目 Apache-2.0 许可**：允许项目以 Apache-2.0 协议分发你的贡献
+- **你有权签署**：你确认贡献是你原创，或你有权提交
+- **一次签署，长期有效**：签署一次 ICLA 后，后续所有 PR 自动适用
+
+---
+
+## 签署信息模板
+
+以下为参考模板，实际签署请使用官方 PDF：
+
+```
+Full name:        _________________________
+E-mail:           _________________________
+GitHub username:  _________________________
+Signature:        _________________________
+Date:             _________________________
+```
+
+---
+
+完整法律文本请以官方 PDF 为准：[apache.org/licenses/icla.pdf](https://www.apache.org/licenses/icla.pdf)

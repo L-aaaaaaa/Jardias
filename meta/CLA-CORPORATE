@@ -1,0 +1,36 @@
+# Apache Corporate Contributor License Agreement (CCLA)
+
+> 以公司/组织名义贡献时，须由授权代表签署本协议。
+> 签署流程见 [CONTRIBUTING](CONTRIBUTING.md)。
+
+---
+
+本文件基于 Apache Software Foundation CCLA 标准模板。
+
+**完整官方 PDF 模板**：https://www.apache.org/licenses/cla-corporate.pdf
+
+## 操作指南
+
+1. 下载官方 PDF：[ccla.pdf](ccla.pdf)（或访问 https://www.apache.org/licenses/cla-corporate.pdf）
+2. 由公司授权代表打印、签名、加盖公章（如适用）
+3. 附上授权代表身份证明（如名片扫描件）
+4. 扫描为 PDF，发送至项目作者
+5. 收到确认邮件后，该公司名下所有员工的 PR 自动适用
+
+## 与 ICLA 的区别
+
+- ICLA 是**个人**签署，确认个人贡献的授权
+- CCLA 是**公司/组织**签署，确认该公司名下员工的贡献授权
+- 如果公司已签署 CCLA，该公司员工无需再签 ICLA
+- 以个人身份（非工作范畴）贡献时仍需签 ICLA
+
+## CCLA 关键条款摘要（非法律建议）
+
+- 公司授权员工以 Apache-2.0 协议贡献
+- 公司保有贡献的版权
+- 公司授予项目 Apache-2.0 许可
+- 签署一次，该公司所有后续贡献自动适用
+
+---
+
+完整法律文本请以官方 PDF 为准：[apache.org/licenses/cla-corporate.pdf](https://www.apache.org/licenses/cla-corporate.pdf)
