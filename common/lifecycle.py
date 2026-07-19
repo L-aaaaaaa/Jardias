@@ -488,9 +488,13 @@ async def conversation_loop(ctx, allow_switch: bool = False):
         from common.i18n import tr_user_input_prompt
         while True:
             await _stdin_ready.wait()
+            logger.debug(f"[TIMING][READER] ready=true, 将调 input() | {_dt.now().strftime('%H:%M:%S.%f')[:-3]}")
             line = await asyncio.to_thread(input, tr_user_input_prompt())
+            logger.debug(f"[TIMING][READER] input() 返回 | line={line!r} | {_dt.now().strftime('%H:%M:%S.%f')[:-3]}")
             _stdin_ready.clear()
+            logger.debug(f"[TIMING][READER] _stdin_ready.clear() | {_dt.now().strftime('%H:%M:%S.%f')[:-3]}")
             await stdin_queue.put(line)
+            logger.debug(f"[TIMING][READER] put 到 stdin_queue | qsize={stdin_queue.qsize()} | {_dt.now().strftime('%H:%M:%S.%f')[:-3]}")
 
     reader_task = asyncio.create_task(_stdin_reader())
     try:
@@ -502,14 +506,23 @@ async def conversation_loop(ctx, allow_switch: bool = False):
 
             try:
                 user_words = await asyncio.wait_for(stdin_queue.get(), timeout=0.1)
+                logger.debug(f"[TIMING][MAIN] stdin_queue.get() 拿到 | {user_words!r} | {_dt.now().strftime('%H:%M:%S.%f')[:-3]}")
             except asyncio.TimeoutError:
                 continue
 
             t_now = _dt.now().strftime("%H:%M:%S")
-            print(f"（发送时间：{t_now}）")
-            turn_input(user_words)
+            logger.debug(f"[TIMING][MAIN] 即将 print 时间戳 {t_now}")
+            if user_words.strip():
+                # 空 round 不打时间戳、不记 actor log —— 让"手抖按了空回车"无痕
+                print(f"（发送时间：{t_now}）", flush=True)
+                turn_input(user_words)
 
-            if not user_words.strip(): continue
+            if not user_words.strip():
+                # 空 round 必须 set reader，否则 reader 阻塞在 _stdin_ready.wait()，
+                # 后续 stdin 里的真实输入永远读不到。
+                _stdin_ready.set()
+                logger.debug(f"[TIMING][MAIN] 空 round 后 set reader 让继续读 | {_dt.now().strftime('%H:%M:%S.%f')[:-3]}")
+                continue
 
             if user_words.strip().lower() in ("exit", "quit", "q"):
                 ctx.history.save()
@@ -544,12 +557,17 @@ async def conversation_loop(ctx, allow_switch: bool = False):
                         reason="auto-switch for image understanding")
 
             turn_ts = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+            logger.debug(f"[TIMING][MAIN] 进入 _run_turn | {_dt.now().strftime('%H:%M:%S.%f')[:-3]}")
             round_ok, messages = await _run_turn(ctx, user_words, image_url, switch_note, round_context)
+            logger.debug(f"[TIMING][MAIN] _run_turn 返回 round_ok={round_ok} | {_dt.now().strftime('%H:%M:%S.%f')[:-3]}")
             round_context = _collect_round_meta(round_ok, ctx)
             _stdin_ready.set()
+            logger.debug(f"[TIMING][MAIN] 第1次 _stdin_ready.set() | {_dt.now().strftime('%H:%M:%S.%f')[:-3]}")
             await _post_round_async(ctx, user_words, messages, round_ok,
                 ts=turn_ts, round_context=round_context)
+            logger.debug(f"[TIMING][MAIN] _post_round_async 返回 | {_dt.now().strftime('%H:%M:%S.%f')[:-3]}")
             _stdin_ready.set()
+            logger.debug(f"[TIMING][MAIN] 第2次 _stdin_ready.set() | {_dt.now().strftime('%H:%M:%S.%f')[:-3]}")
 
             next_character = clear_pending_switch()
             if next_character: await _do_switch_character(ctx, next_character)
