@@ -34,7 +34,7 @@
 
 > [演示说明文档](library/参考/演示场景.md)
 > [运行输出示例](library/参考/运行输出示例/)
-> 实际运行录屏（待补充）
+> [实际运行录屏：串联场景演示（B 站）](https://www.bilibili.com/video/BV1ZGKq6nEEi)
 > [差异对比](library/参考/Jardias%20与主流%20Agent%20框架、平台对比.md)
 
 ## 已验证场景

@@ -34,7 +34,7 @@ Character 3, ask character 1 what topics I've discussed with them today, then sh
 
 > [Demo Documentation](library/参考/演示场景.md)
 > [Run Output Examples](library/参考/运行输出示例/)
-> Live Recording (to be added)
+> [Live Recording: Chained Scenario Demo (Bilibili)](https://www.bilibili.com/video/BV1ZGKq6nEEi)
 > [Comparison](library/参考/Jardias%20与主流%20Agent%20框架、平台对比.md)
 
 ## Verified Scenarios
