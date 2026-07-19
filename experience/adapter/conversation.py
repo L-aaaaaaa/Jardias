@@ -47,7 +47,6 @@ from experience.io.writer import (
     _load_dump_meta, _save_dump_meta, _l1_ensure_summary,
     write_block2_append, clear_block3, write_block3,
 )
-from tool.builtin import tools
 from yinao import IPU_REGISTRY, get_ipu_capabilities
 from yinao.weaver.icp_tracker import _usage_to_icp
 from .archive_recall import _covered_ranges
@@ -84,6 +83,7 @@ def _caps_summary(caps: set[str]) -> str:
 
 
 def _get_tool_definitions() -> list[str]:
+    from tool.builtin import tools
     defs = tools.get_definitions()
     return [t["function"]["name"] for t in defs] if defs else []
 
@@ -113,6 +113,7 @@ def _build_character_context(current_character: str | None = None) -> str:
 
 
 def _build_shice_guide() -> str:
+    from tool.builtin import tools
     names = tools.list_names()
     if "shice_schedule_add" not in names:
         return ""

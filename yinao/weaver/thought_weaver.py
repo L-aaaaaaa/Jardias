@@ -143,7 +143,7 @@ async def weave_thought(messages: list[dict], ipu_config,
             round_end(i + 1, 'no tool calls' if i == 0 else 'tool chain done')
             return ChatResult(messages=messages)
 
-    max_rounds_reached(MAX_ITER)
+    max_rounds_reached(WEAVE_MAX_TURNS)
     return ChatResult(messages=messages)
 
 

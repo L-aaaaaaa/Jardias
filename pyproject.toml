@@ -1,0 +1,208 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jardias"
+version = "0.1.0"
+description = "Just A Rather Dimension-Free-Updating Intelligent Actor System"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.10"
+authors = [
+    { name = "Cazlor", email = "zl.chen.research@outlook.com" },
+]
+keywords = [
+    "agent",
+    "ai-actor",
+    "memory-architecture",
+    "semantic-scheduling",
+    "multi-character",
+    "ipy",
+    "yinao",
+    "shice",
+    "heel",
+    "acp",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = [
+    "openai>=1.30,<2.0",
+    "pydantic>=2.5,<3.0",
+]
+
+[project.optional-dependencies]
+# 文档/测试/开发依赖。
+# 用户安装时:`pip install jardias[dev]` 一次性获得全部。
+dev = [
+    "pytest>=7.0,<9.0",
+    "pytest-asyncio>=0.21",
+    "ruff>=0.1,<1.0",
+    "mypy>=1.5,<2.0",
+    "types-requests>=2.31",
+]
+test = [
+    "pytest>=7.0,<9.0",
+    "pytest-asyncio>=0.21",
+]
+lint = [
+    "ruff>=0.1,<1.0",
+]
+docs = [
+    # 当前文档已包含在仓库中,未来如有 MkDocs / Sphinx 站点再补
+]
+
+[project.urls]
+Homepage = "https://github.com/L-aaaaaaa/Jardias"
+Repository = "https://github.com/L-aaaaaaa/Jardias.git"
+Issues = "https://github.com/L-aaaaaaa/Jardias/issues"
+
+[project.scripts]
+# `pip install jardias` 后可直接运行 `jardias`,等价于:
+#   python -m jardias
+#
+# 为什么不指向 `app:main`?
+# 因为 app.py 是仓库根目录的"thrown-script",用了 sys.path.insert hack
+# 才能 `python app.py` 直接运行。这个 hack 在 pip install 之后会失效。
+# 真正的薄入口见 jardias/__main__.py。
+jardias = "jardias.__main__:cli"
+
+# ─────────────────────────────────────────────────────────────────────
+# Hatch 打包配置
+# ─────────────────────────────────────────────────────────────────────
+#
+# 本项目布局属于 unflat (loose-namespace) + 顶层包混合:
+# - 顶层 `jardias/`      — 合法 package(包含 __init__.py + __main__.py)
+#                          充当 pip install 后的标准入口与版本号来源
+# - 顶层 `app.py`        — 兼容旧式 `python app.py` 启动
+# - 各 `character/ common/ yinao/ ...` 子模块 — 子包,内部布局独立
+#
+# 这种布局有两点需要 hatch 显式配置:
+# 1. wheel 要包含 `jardias` 顶层包 AND `app.py` (force-include 后者是单文件)
+# 2. force-include 协议/文档/数据模板,让 `pip install` 后下游项目能拿到
+#
+
+[tool.hatch.build.targets.wheel]
+include = [
+    "jardias",
+    "app.py",
+    "character",
+    "common",
+    "data_shape",
+    "experience",
+    "media",
+    "playbook",
+    "schedule",
+    "tool",
+    "yinao",
+    "tests",
+]
+
+[tool.hatch.build.targets.wheel.force-include]
+# 协议/文档/数据模板随包一起分发,方便 `pip install` 后的下游项目。
+"LICENSE" = "jardias/LICENSE"
+"NOTICE" = "jardias/NOTICE"
+"TRADEMARK.md" = "jardias/TRADEMARK.md"
+".env.example" = "jardias/.env.example"
+"meta" = "jardias/meta"
+"library" = "jardias/library"
+"doc" = "jardias/doc"
+"README.md" = "jardias/README.md"
+"README_en.md" = "jardias/README_en.md"
+"pytest.ini" = "jardias/pytest.ini"
+
+[tool.hatch.build.targets.sdist]
+# 源码分发包(sdist)内只暴露仓库的源文件 + 元数据,排除运行时产物。
+exclude = [
+    "logs/**",
+    "character_data/**",
+    "library/参考/运行输出示例/**",
+    ".pytest_cache/**",
+    "__pycache__/**",
+    "*.pyc",
+]
+
+[tool.hatch.build.targets.wheel.sources]
+# 把仓库根作为源根,hatch 默认搜索第一个含 __init__.py 的目录,
+# 但本项目各子包同辈(unflat layout),显式告诉 hatch 从哪里开始。
+"." = ""
+
+# ─────────────────────────────────────────────────────────────────────
+# 以下是各工具的配置块——仅对本地开发与 CI 生效,
+# 不会影响 `pip install jardias` 后用户的行为。
+# ─────────────────────────────────────────────────────────────────────
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-ra --strict-markers"
+markers = [
+    "integration: requires external services or a live application process",
+    "slow: long-running tests excluded from the default unit suite",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = [
+    "library/**",
+    "logs/**",
+]
+
+[tool.ruff.lint]
+# 项目当前允许的规则集,具体诊断未在此列出——后续可逐步打开 E/F/B/UP/ASYNC 等。
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "SIM",  # flake8-simplify
+]
+ignore = [
+    "E501",  # line-too-long:目前风格不统一,先关闭
+    "B008",  # 函数调用默认值:常见 idiom,不视为 bug
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["B011"]  # 测试中允许 assert False
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+warn_unused_configs = false
+# 逐步严格的迁移策略:先打开最基本的,再升级
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+# ─────────────────────────────────────────────────────────────────────
+# 维护说明
+# ─────────────────────────────────────────────────────────────────────
+# 1. 此文件是 *代码* 的"包配置 source of truth",与 requirements.txt 互补:
+#    - pyproject.toml  → 供 pip / pip-tools / Poetry / uv 消费
+#    - requirements.txt→ 仅为兼容旧式 `pip install -r` 的最小子集
+#      (CI 与文档都应以 pyproject.toml 为准)
+# 2. 修改版本号 = 发版。届时同步更新:
+#    - meta/CHANGELOG 加 [0.x.y] 段
+#    - git tag v0.x.y
+#    - README.md 中的版本号引用
+# 3. 添加新的可选依赖(extras)请用 [project.optional-dependencies.<名字>]
+#    不要往 [project.dependencies] 里堆——保持最小安装轻量。

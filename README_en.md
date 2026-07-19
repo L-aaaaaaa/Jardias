@@ -33,9 +33,26 @@ Recall the [What is the essence of value?] topic you summarized earlier.
 Character 3, ask character 1 what topics I've discussed with them today, then share your thoughts with me.
 
 > [Demo Documentation](library/参考/演示场景.md)
-> [Actual Run Logs](logs/)
-> [Live Recording (link)](#)
+> [Run Output Examples](library/参考/运行输出示例/)
+> Live Recording (to be added)
 > [Comparison](library/参考/Jardias%20与主流%20Agent%20框架、平台对比.md)
+
+## Verified Scenarios
+
+`library/参考/运行输出示例/` contains actual run records for the featured capabilities, along with the history, experience, configuration, and summary files produced by the chained scenario. These artifacts demonstrate the behavior of the reference implementation; they do not imply production-grade real-time or concurrency guarantees.
+
+| Capability | Run evidence |
+|---|---|
+| Self-triggered deep refinement | [Self-triggered deep refinement](library/参考/运行输出示例/自触发深度精炼.log) |
+| Dual-character self-surgery | [Dual-character self-surgery](library/参考/运行输出示例/双角色自我手术.log) |
+| Automatic IPU switching | [Automatic IPU switching](library/参考/运行输出示例/自动切换IPU.log) |
+| Shícè: ambiguity and boundary confirmation | [Ambiguity and boundary confirmation](library/参考/运行输出示例/时策/歧义、边界确认.log) |
+| Shícè: execution without misses | [Scenario A](library/参考/运行输出示例/时策/场景A-无错过和模式切换.log) |
+| Shícè: partial-miss compensation | [Scenario B](library/参考/运行输出示例/时策/场景B-错过部分无切换.log) |
+| Shícè: dynamic strategy switching | [Scenario C](library/参考/运行输出示例/时策/场景C-角色操作切换.log) |
+| Shícè: full-miss compensation | [Scenario D](library/参考/运行输出示例/时策/场景D-全部错过.log) |
+| Shícè: natural-language intervention | [Dynamic intervention](library/参考/运行输出示例/时策/动态干预.log) |
+| Chained scenarios and persistent memory | [Chained scenario examples](library/参考/运行输出示例/串联场景示例/) |
 
 ---
 
@@ -208,16 +225,17 @@ Jardias provides not just an implementation, but a continuously improving archit
 | [Jardias vs Mainstream Agent Frameworks](library/参考/Jardias%20与主流%20Agent%20框架、平台对比.md) | Technical selection reference matrix | Determining project use cases |
 | [Application Reference](library/参考/应用参考.md) | Typical usage scenario classification | Guiding how to use the framework well |
 | [Run and Development Tips](library/参考/运行和开发提示.md) | Environment configuration, debugging methods, development guide | Development reference |
-| [Demo Scenarios](library/参考/演示场景.md) | Chinese usage guide for featured functions | Quick start for new users |
+| [Demo Scenarios](library/参考/演示场景.md) | Usage guide for the featured functions | Quick start for new users |
+| [Run Output Examples](library/参考/运行输出示例/) | Actual run records and persisted data for character collaboration, memory management, IPU switching, and Shícè scheduling | Verifying architecture behavior and reproducing scenarios |
 
 ### Paper Supplementary References
 
 | Document | Description |
 |---|---|
-| [Theory-to-Implementation Mapping Report](library/论文/理论架构与工程实例的映射报告.md) | Run log item-by-item verification of all eight papers, confirming no conflicts between engineering implementation and theoretical design |
+| [Theory-to-Implementation Mapping Report](library/参考/理论架构与工程实例的映射报告.md) | Item-by-item mapping of the eight core papers and related MVP design to run evidence | Understanding the correspondence between theory and engineering evidence |
 | [Paper Reading Guide](library/论文/论文阅读指南.md) | Suggested reading order for papers and quick reference for core concepts |
 
-> All theoretical documents are in [library/](library/)
+> All papers, reference documents, and run output examples are in [library/](library/)
 
 ---
 
@@ -237,8 +255,19 @@ jardias/
 ├── playbook/           # Playbook layer: task strategy, workflow definitions
 ├── data_shape/         # Data structure definitions
 ├── doc/                # Development documents
-├── library/            # Theoretical documents
-├── logs/               # Run logs
+├── library/            # Papers, reference documents, and run output examples
+│   ├── 论文/             # Directory name kept in pinyin to match the paper filenames inside
+│   │   ├── zh/          # Chinese papers
+│   │   └── en/          # English papers
+│   └── 参考/             # Reference docs and the mapping report (see tags below)
+│       ├── 演示场景.md    # Demo scenarios (CN)
+│       ├── 运行和开发提示.md  # Run & dev tips (CN)
+│       ├── 应用参考.md    # Application reference
+│       ├── 能力差距对照表.md  # Capability gap comparison
+│       ├── Jardias 与主流 Agent 框架、平台对比.md  # Framework comparison
+│       ├── 理论架构与工程实例的映射报告.md  # Theory-to-Implementation Mapping Report
+│       └── 运行输出示例/   # Actual run logs and persisted data
+├── logs/               # Runtime logs, when enabled
 ├── meta/               # Open source compliance (LICENSE / CLA / CONTRIBUTING)
 └── tests/              # Tests
 ```
@@ -259,6 +288,8 @@ Before contributing, please read [CONTRIBUTING](CONTRIBUTING.md) and sign the co
 ## Roadmap
 
 Current stage: **Reference Implementation**—core mechanisms are runnable and verifiable, but not production-ready.
+
+The current `library/` includes run output for character collaboration, persistent memory, IPU hot-swapping, Shícè boundary confirmation, missed-task compensation, and dynamic intervention. These artifacts provide constructive evidence of the architecture; they do not imply industrial-grade real-time performance, concurrency, or production reliability. Shícè is not intended for hard real-time or high-frequency large-scale scheduling, and semantic decision quality depends on the underlying IPU.
 
 ---
 

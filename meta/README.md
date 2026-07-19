@@ -21,7 +21,7 @@
 ### 项目元文件（社区对接）
 
 - **NOTICE** — Apache 协议强制要求的归属文件。声明项目作者、第三方依赖归属、商标保留、论文协议范围。
-- **TRADEMARK** — 商标政策。声明 `Jardias` `Jarnis` `Jardias` `小明` `IPU` `Yinao` `Shice` `HEEL` `ACP` 9 个名称的保留状态和使用边界。
+- **TRADEMARK** — 商标政策。声明 `Jardias` `Yinao` `Shice` `HEEL` `ACP` 9 个名称的保留状态和使用边界。
 - **CONTRIBUTING** — 贡献流程。包括 CLA 签署指引、PR 规范、commit message 规范、开发约定、不接受的 PR 类型。
 - **CLA-INDIVIDUAL** — Apache 个人贡献者许可协议占位骨架。下载官方 PDF 后填入。
 - **CLA-CORPORATE** — Apache 企业贡献者许可协议占位骨架。同上。

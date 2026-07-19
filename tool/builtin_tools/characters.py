@@ -10,7 +10,6 @@ from collections.abc import Callable
 from character import get_history_path
 from character.history import History
 from character.registry import registry
-from experience.adapter.conversation import build_system_message, _extract_pure_text
 from common.logger import logger
 from common.cli_output import set_display_name
 from data_shape import ActorConfig, IPURuntime, RoleConfig
@@ -122,6 +121,7 @@ def list_characters() -> str:
 async def send_to_character(arguments: dict) -> str:
     recipient = arguments["recipient"]
     message = arguments["message"]
+    from experience.adapter.conversation import _extract_pure_text
     message = _extract_pure_text(message)
     hint = f"[Error] 角色 {recipient} 不存在。使用 list_characters 查看可用角色。"
     if not registry.exists(recipient): return hint
@@ -159,6 +159,7 @@ def _resolve_recipient_ipu(recipient: str, recipient_config) -> tuple:
 
 def _build_recipient_messages(recipient_config, recipient_history, recipient: str) -> list:
     """构建发送给接收者 LLM 的 messages 列表（system + 最近20条历史）。"""
+    from experience.adapter.conversation import build_system_message
     all_msgs = [build_system_message(recipient_config, recipient)]
     is_first = True
     for entry in recipient_history.messages[-20:]:

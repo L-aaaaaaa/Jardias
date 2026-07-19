@@ -19,7 +19,8 @@ from yinao.weaver.icp_tracker import (
     cumulative_usage, provider_latency,
     _usage_to_icp, _load_cumulative,
 )
-from yinao.weaver.round_state import last_round
+from yinao.weaver.round_state import last_round  # noqa: F401  旧导入保留兼容
+import yinao.weaver.round_state as _round_state
 
 
 def build_round_context(character_name: str | None = None) -> str:
@@ -27,8 +28,13 @@ def build_round_context(character_name: str | None = None) -> str:
 
     累计数据优先从 _dump_meta.json 读取（持久化，跨重启累计），
     未传 character_name 时退回到进程内 cumulative_usage（向后兼容）。
+
+    last_round 始终通过模块属性访问（_round_state.last_round），
+    避免 ``from X import Y`` 把 last_round 绑定到首次导入时的旧实例。
     """
+    last_round = _round_state.last_round
     parts: list[str] = ["# 状态"]
+
 
     # 1. ICP 用量（用户视角自然句，与终端本轮消耗同款措辞）
     if last_round.usage:
