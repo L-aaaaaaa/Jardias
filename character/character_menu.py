@@ -1,6 +1,6 @@
 """
 character_menu.py — 终端交互式角色选择/创建菜单。
-基于 Jarvis0 的 character_menu.py 适配。
+基于 Jardias0 的 character_menu.py 适配。
 支持中英文国际化。
 """
 from __future__ import annotations
