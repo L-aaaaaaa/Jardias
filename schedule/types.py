@@ -1,5 +1,5 @@
 """
-schedule/types.py — 时策模块数据形状（从 Jarvis0 data_shape/schedule.py 折入）。
+schedule/types.py — 时策模块数据形状（从 Jardias0 data_shape/schedule.py 折入）。
 """
 from __future__ import annotations
 

@@ -14,7 +14,7 @@ import time
 from collections import defaultdict
 from typing import Any
 
-# 耗尽/欠费的错误关键词（参考 Jarvis0 yinao/model_strategy.py）
+# 耗尽/欠费的错误关键词（参考 Jardias0 yinao/model_strategy.py）
 EXHAUSTED_KEYWORDS = frozenset((
     "429", "quota", "exhausted", "limit",
     "out of quota", "rate limit", "403",
