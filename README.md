@@ -2,6 +2,16 @@
 
 **[English Version](README_en.md)** | 中文版
 
+## 仓库
+
+| 平台 | 地址 |
+|---|---|
+| GitHub | https://github.com/L-aaaaaaa/Jardias.git |
+| Gitee | https://gitee.com/lache00/jardias.git |
+| AtomGit | https://atomgit.com/lache00/Jardias.git |
+
+---
+
 ## 特色功能示例指令：
 
 ### 自触发深度精炼
@@ -216,7 +226,7 @@ Jardias 不只提供实现，还有一套持续完善的架构理论，源自八
 | 5 | [AIOS 认知内核：接口规范与迭代框架](library/论文/zh/5.AIOS.md) | [10.5281/zenodo.21427661](https://doi.org/10.5281/zenodo.21427661) | 统一框架，定义 HEEL、时策、配置即记忆、角色-分身-义脑解耦四个升维模块及接口规范 |
 | 8 | [破壁原理：维度混叠的结构性脆弱性](library/论文/zh/8.破壁原理.md) | [10.5281/zenodo.20278747](https://doi.org/10.5281/zenodo.20278747) | 认知决策框架——如何通过策略升维打破次元壁 |
 | 10 | [维度自由更新论：信念修正的递归维度跃迁](library/论文/zh/10.维度自由更新论.md) | [10.5281/zenodo.20155165](https://doi.org/10.5281/zenodo.20155165) | 范式创新的可操作工程框架——递归嵌套贝叶斯更新。 |
-| 12 | [Actor Context Protocol：上下文标准协议](library/论文/zh/12.Actor%20Context%20Protocol.md) | Chen, Z. (2026). Actor Context Protocol (ACP) — Design Draft. Zenodo. [10.5281/zenodo.21429417](https://doi.org/10.5281/zenodo.21429417) | 为多角色协作建立统一的上下文交互规范，解决角色间消息路由和状态同步问题 |
+| 12 | [Actor Context Protocol：上下文标准协议](library/论文/zh/12.Actor%20Context%20Protocol.md) | [10.5281/zenodo.21429417](https://doi.org/10.5281/zenodo.21429417) | 为多角色协作建立统一的上下文交互规范，解决角色间消息路由和状态同步问题 |
 
 ### 参考文档
 
